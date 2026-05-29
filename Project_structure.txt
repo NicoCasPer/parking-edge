@@ -1,0 +1,109 @@
+parking-edge/
+├── docs/
+│   ├── figuras/                  # Diagramas del blueprint
+│   └── main.tex                  # Blueprint técnico (LaTeX)
+│
+├── firmware/
+│   ├── m4/                       # Firmware Cortex-M4 (Integrante A)
+│   │   ├── CMakeLists.txt
+│   │   └── src/
+│   │       ├── main.c
+│   │       ├── sensor_driver.c
+│   │       ├── sensor_driver.h
+│   │       ├── rpmsg_interface.c
+│   │       ├── rpmsg_interface.h
+│   │       ├── watchdog.c
+│   │       └── watchdog.h
+│   │
+│   └── pru/                      # Firmware PRU-SS (Integrante A)
+│       └── src/
+│           ├── pru0_pwm.c
+│           └── pru1_gpio_irq.c
+│
+├── services/
+│   ├── common/                   # Módulos compartidos entre servicios
+│   │   ├── event_bus.py          # Cliente MQTT unificado (Integrante B)
+│   │   └── database.py           # Acceso a BD común (Integrante A)
+│   │
+│   ├── hardware-controller/      # Interfaz Linux ↔ M4 (Integrante B)
+│   │   └── app/
+│   │       ├── main.py
+│   │       ├── rpmsg_client.py
+│   │       └── command_dispatcher.py
+│   │
+│   ├── vision-service/           # Captura, OCR y calidad de imagen
+│   │   ├── app/                  # Ambos integrantes colaboran
+│   │   │   ├── capture.py        # (Integrante A)
+│   │   │   ├── frame_selector.py # (Integrante A)
+│   │   │   ├── quality.py        # (Integrante A)
+│   │   │   ├── ocr_pipeline.py   # (Integrante B)
+│   │   │   ├── plate_validator.py# (Integrante B)
+│   │   │   └── main.py           # Orquestación del servicio (Integrante B)
+│   │   └── tests/
+│   │       ├── test_capture.py
+│   │       ├── test_ocr_pipeline.py
+│   │       └── test_plate_validator.py
+│   │
+│   ├── access-orchestrator/      # Lógica de negocio y decisión (Integrante B)
+│   │   ├── app/
+│   │   │   ├── main.py
+│   │   │   ├── orchestrator.py
+│   │   │   └── policies.py
+│   │   └── tests/
+│   │       ├── test_orchestrator.py
+│   │       └── test_policies.py
+│   │
+│   ├── payment-integration/      # Cliente de pagos y circuit breaker (Integrante A)
+│   │   └── app/
+│   │       ├── payment_client.py
+│   │       ├── circuit_breaker.py
+│   │       └── local_store.py
+│   │
+│   ├── connectivity-service/     # Telemetría y salud del sistema (Integrante B)
+│   │   └── app/
+│   │       ├── main.py
+│   │       └── telemetry.py
+│   │
+│   └── mock_payment_server/      # Simulador de proveedor de pagos (Integrante A)
+│       ├── app.py
+│       └── requirements.txt
+│
+├── web-dashboard/                # Interfaz web y backend (Integrante B)
+│   ├── backend/
+│   │   ├── app.py                # Flask + WebSocket
+│   │   ├── auth.py
+│   │   └── requirements.txt
+│   ├── frontend/
+│   │   ├── index.html
+│   │   ├── style.css
+│   │   └── script.js
+│   └── nginx/
+│       └── dashboard.conf        # Configuración de proxy inverso
+│
+├── systemd/                      # Unidades de systemd
+│   ├── m4-firmware.service       # Carga del firmware M4 (Integrante A)
+│   ├── hardware-controller.service
+│   ├── vision-service.service
+│   ├── access-orchestrator.service
+│   ├── payment-integration.service
+│   ├── connectivity-service.service
+│   ├── web-dashboard.service
+│   └── database.service          # Inicialización de la BD (Integrante A)
+│
+├── config/
+│   ├── app.env.example           # Variables de entorno (credenciales)
+│   └── policies.yaml             # Parámetros de operación
+│
+├── db/
+│   ├── migrations/
+│   │   └── 001_initial.sql
+│   └── schema.sql                # Esquema de base de datos SQLite (Integrante A)
+│
+├── scripts/
+│   ├── install.sh                # Instalación de dependencias
+│   ├── healthcheck.sh            # Verificación de salud del sistema
+│   └── load_m4_fw.sh             # Carga del firmware en el M4 (Integrante A)
+│
+├── README.md
+├── CHANGELOG.md
+└── .gitignore
