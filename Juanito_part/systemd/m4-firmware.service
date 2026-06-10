@@ -1,0 +1,23 @@
+[Unit]
+Description=BeaglePlay M4 Firmware Loader
+Documentation=man:remoteproc(8)
+After=network.target
+Before=m4-parking-service.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sh -c 'echo 5 > /sys/module/printk/parameters/default_message_loglevel'
+ExecStart=/opt/parking/scripts/load_m4_fw.sh /opt/parking/firmware/m4_firmware.bin
+ExecStartPost=/bin/sleep 2
+RemainAfterExit=yes
+
+# Reintentar si falla
+Restart=on-failure
+RestartSec=5
+
+# Seguridad
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

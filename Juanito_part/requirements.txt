@@ -1,0 +1,32 @@
+# requirements.txt
+# Dependencias Python para el módulo de visión y servicio de parking
+
+# Versiones recomendadas (compatibles con Debian/Raspberry Pi OS)
+
+# Procesamiento de imágenes
+opencv-python==4.8.1.78
+numpy==1.24.3
+
+# Detección YOLO
+ultralytics==8.0.197
+
+# OCR
+pytesseract==0.3.10
+
+# Utilidades
+Pillow==10.0.0
+
+# Logging y debugging
+colorlog==6.7.0
+
+# API REST (opcional, para futuras extensiones)
+# flask==3.0.0
+# requests==2.31.0
+
+# Base de datos (opcional)
+# psycopg2-binary==2.9.7
+# sqlalchemy==2.0.21
+
+# Async I/O (para comunicación RPMsg)
+# asyncio (included in Python 3.7+)
+# aiofiles==23.2.1

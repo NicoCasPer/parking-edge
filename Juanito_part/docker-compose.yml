@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # =====================================================================
+  # Entorno de compilación
+  # =====================================================================
+  
+  build_m4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parking_build_m4
+    volumes:
+      - ./Modulo_actuadores:/workspace/Modulo_actuadores
+      - ./scripts:/workspace/scripts
+      - build_cache:/workspace/build
+    working_dir: /workspace/Modulo_actuadores
+    command: make clean build
+    
+  # =====================================================================
+  # Entorno de testing (opcional)
+  # =====================================================================
+  
+  test_vision:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parking_test_vision
+    volumes:
+      - ./Modulo_vision:/workspace/Modulo_vision
+      - ./Modelo:/workspace/Modelo
+      - ./tmp_captures:/workspace/tmp_captures
+    working_dir: /workspace/Modulo_vision
+    command: python3 -m pytest -v
+    environment:
+      - PYTHONUNBUFFERED=1
+
+volumes:
+  build_cache:
+    driver: local
+
+networks:
+  default:
+    name: parking_network
