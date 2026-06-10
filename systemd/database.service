@@ -1,0 +1,19 @@
+[Unit]
+Description=Parking Edge — Inicialización de base de datos SQLite
+After=network.target
+Before=access-orchestrator.service payment-integration.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=parking
+Group=parking
+WorkingDirectory=/opt/parking-edge
+ExecStart=/usr/bin/sqlite3 /var/lib/parking/parking.db ".read /opt/parking-edge/db/migrations/001_initial.sql"
+ExecStart=/usr/bin/sqlite3 /var/lib/parking/payment_queue.db ".read /opt/parking-edge/db/migrations/001_initial.sql"
+
+# Asegurar que el directorio de datos existe con los permisos correctos
+ExecStartPre=/bin/install -d -m 0750 -o parking -g parking /var/lib/parking
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Parking Edge — Carga del firmware M4F (FreeRTOS)
+DefaultDependencies=no
+After=local-fs.target
+Before=hardware-controller.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/parking-edge/scripts/load_m4_fw.sh
+
+# Remoteproc requiere root para escribir en /sys/class/remoteproc/
+User=root
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=m4-firmware
+
+[Install]
+WantedBy=multi-user.target

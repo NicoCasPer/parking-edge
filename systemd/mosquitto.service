@@ -1,0 +1,14 @@
+[Unit]
+Description=Mosquitto MQTT Broker
+After=network.target
+Before=hardware-controller.service vision-service.service access-orchestrator.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/mosquitto -c /etc/mosquitto/mosquitto.conf
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=multi-user.target

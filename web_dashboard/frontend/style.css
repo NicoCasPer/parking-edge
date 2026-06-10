@@ -1,0 +1,283 @@
+/* style.css — Dashboard parking-edge */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --border:    #2a2d3a;
+  --accent:    #4f8ef7;
+  --green:     #2ecc71;
+  --red:       #e74c3c;
+  --yellow:    #f39c12;
+  --text:      #e2e4ec;
+  --text-muted:#7b7f94;
+  --radius:    8px;
+  --font:      system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Screens ──────────────────────────────────────────────────────────────── */
+.screen { min-height: 100vh; }
+.hidden { display: none !important; }
+
+/* ── Login ─────────────────────────────────────────────────────────────────── */
+#login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f1117 0%, #1a1d27 100%);
+}
+
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2.5rem;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+
+.login-box h1 { font-size: 1.8rem; color: var(--accent); margin-bottom: 0.25rem; }
+.login-box .subtitle { color: var(--text-muted); margin-bottom: 1.5rem; }
+
+.login-box form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.login-box input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.6rem 0.9rem;
+  font-size: 14px;
+  outline: none;
+  transition: border-color .2s;
+}
+
+.login-box input:focus { border-color: var(--accent); }
+
+.login-box button {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0.65rem;
+  transition: opacity .2s;
+}
+
+.login-box button:hover { opacity: .85; }
+.error { color: var(--red); font-size: 13px; margin-top: .25rem; }
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+header h1 { font-size: 1.1rem; color: var(--accent); }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+#user-badge {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: .25rem .75rem;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.status-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.offline { background: var(--text-muted); }
+
+header button {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: .3rem .8rem;
+  transition: border-color .2s, color .2s;
+}
+header button:hover { border-color: var(--accent); color: var(--text); }
+
+/* ── Main layout ──────────────────────────────────────────────────────────── */
+main {
+  max-width: 1200px;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ── Stats row ────────────────────────────────────────────────────────────── */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+}
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1rem;
+  text-align: center;
+}
+
+.stat-value {
+  display: block;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: .25rem;
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+.card h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.badge {
+  background: var(--accent);
+  border-radius: 999px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: .1rem .5rem;
+}
+
+/* ── Barrier controls ─────────────────────────────────────────────────────── */
+.barrier-controls {
+  display: flex;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.barrier-controls button {
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: .6rem 1.5rem;
+  transition: opacity .2s;
+}
+
+.btn-open  { background: var(--green); }
+.btn-stop  { background: var(--yellow); }
+.btn-close { background: var(--red); }
+.barrier-controls button:hover { opacity: .85; }
+.feedback { font-size: 13px; color: var(--text-muted); margin-top: .5rem; }
+
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+.table-wrapper { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th, td {
+  padding: .55rem .75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+th { color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+tr:hover td { background: rgba(255,255,255,.02); }
+
+.decision-granted { color: var(--green); font-weight: 600; }
+.decision-denied  { color: var(--red);   font-weight: 600; }
+
+/* ── Whitelist form ───────────────────────────────────────────────────────── */
+.whitelist-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+}
+
+.whitelist-form input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  padding: .5rem .75rem;
+  flex: 1 1 140px;
+  transition: border-color .2s;
+}
+
+.whitelist-form input:focus { border-color: var(--accent); }
+
+.whitelist-form button {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: .5rem 1.2rem;
+  transition: opacity .2s;
+}
+
+.whitelist-form button:hover { opacity: .85; }
+
+@media (max-width: 640px) {
+  main { padding: 0 .75rem; margin: 1rem auto; }
+  .stat-value { font-size: 1.6rem; }
+}

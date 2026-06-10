@@ -1,0 +1,37 @@
+[Unit]
+Description=Parking Edge — Hardware Controller (RPMsg ↔ MQTT)
+After=mosquitto.service m4-firmware.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+User=parking
+Group=parking
+SupplementaryGroups=dialout
+
+WorkingDirectory=/opt/parking-edge
+EnvironmentFile=/opt/parking-edge/config/app.env
+ExecStart=/usr/bin/python3 -m services.hardware_controller.app.main
+
+Restart=on-failure
+RestartSec=3s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+
+# Límites de recursos
+MemoryMax=128M
+CPUQuota=20%
+
+# Seguridad
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/log/parking
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hardware-controller
+
+[Install]
+WantedBy=multi-user.target

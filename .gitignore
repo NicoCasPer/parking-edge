@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+pip-wheel-metadata/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Entorno — NUNCA versionar credenciales
+config/app.env
+*.env
+!*.env.example
+
+# Base de datos local de desarrollo
+*.db
+*.sqlite
+*.sqlite3
+
+# Capturas temporales de cámara
+/tmp/parking_captures/
+
+# Binario del firmware (artefacto de build, no fuente)
+firmware/m4/bin/
+firmware/m4/build/
+*.out
+*.elf
+*.map
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Coverage y análisis
+*.prof
+*.lprof
+
+# Modelo ML — demasiado grande para git (usar Git LFS o descarga manual)
+Modelo/*.tflite
+Modelo/*.pt
+Modelo/*.onnx

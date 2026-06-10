@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parking Edge — Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ── Login ─────────────────────────────────────────────────────────────── -->
+<div id="login-screen" class="screen">
+  <div class="login-box">
+    <h1>Parking Edge</h1>
+    <p class="subtitle">Sistema de Control de Acceso</p>
+    <form id="login-form">
+      <input id="username" type="text" placeholder="Usuario" autocomplete="username" required />
+      <input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" required />
+      <button type="submit">Ingresar</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ── Dashboard ─────────────────────────────────────────────────────────── -->
+<div id="dashboard-screen" class="screen hidden">
+  <header>
+    <h1>Parking Edge</h1>
+    <div class="header-right">
+      <span id="user-badge"></span>
+      <span id="mqtt-status" class="status-dot offline" title="Estado MQTT"></span>
+      <button id="logout-btn">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Estadísticas rápidas -->
+    <section class="stats-row">
+      <div class="stat-card">
+        <span class="stat-value" id="stat-granted">—</span>
+        <span class="stat-label">Accesos hoy</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="stat-denied">—</span>
+        <span class="stat-label">Denegados hoy</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-value" id="stat-whitelist">—</span>
+        <span class="stat-label">Placas en whitelist</span>
+      </div>
+    </section>
+
+    <!-- Control de barrera (solo operator/admin) -->
+    <section id="barrier-section" class="card hidden">
+      <h2>Control de Barrera</h2>
+      <div class="barrier-controls">
+        <button class="btn-open"  onclick="sendBarrier('OPEN')">Abrir</button>
+        <button class="btn-stop"  onclick="sendBarrier('STOP')">Detener</button>
+        <button class="btn-close" onclick="sendBarrier('CLOSE')">Cerrar</button>
+      </div>
+      <p id="barrier-feedback" class="feedback"></p>
+    </section>
+
+    <!-- Eventos en tiempo real -->
+    <section class="card">
+      <h2>Eventos Recientes <span id="event-count" class="badge">0</span></h2>
+      <div class="table-wrapper">
+        <table id="events-table">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Placa</th>
+              <th>Carril</th>
+              <th>Decisión</th>
+              <th>Razón</th>
+              <th>Confianza</th>
+            </tr>
+          </thead>
+          <tbody id="events-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Gestión de whitelist (solo admin) -->
+    <section id="whitelist-section" class="card hidden">
+      <h2>Whitelist de Placas</h2>
+      <form id="whitelist-form" class="whitelist-form">
+        <input id="wl-plate"       type="text" placeholder="Placa (ej: ABC123)" maxlength="7" />
+        <input id="wl-owner"       type="text" placeholder="Propietario" />
+        <input id="wl-valid-from"  type="date" />
+        <input id="wl-valid-until" type="date" />
+        <button type="submit">Agregar / Actualizar</button>
+      </form>
+      <div class="table-wrapper" style="margin-top:1rem">
+        <table id="whitelist-table">
+          <thead>
+            <tr><th>Placa</th><th>Propietario</th><th>Desde</th><th>Hasta</th></tr>
+          </thead>
+          <tbody id="whitelist-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.5/dist/socket.io.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

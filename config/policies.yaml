@@ -1,0 +1,53 @@
+# policies.yaml — Configuración de políticas de negocio y operación.
+# Todos los umbrales ajustables aquí; los servicios leen este archivo al arrancar.
+
+access:
+  # Confianza mínima del OCR (0.0–1.0) para considerar una placa legible.
+  min_confidence: 0.75
+  # Calidad mínima de frame (0.0–1.0) para procesar el OCR.
+  min_frame_quality: 0.30
+  # Modo asistido: si es true, placas no reconocidas van a revisión manual.
+  assisted_mode: false
+  # Política ante cualquier fallo del sistema: "deny" (fail-closed) o "allow".
+  fault_policy: deny
+
+vision:
+  # Número de frames en la ráfaga de captura.
+  burst_frames: 5
+  # Varianza Laplaciana mínima para considerar un frame nítido.
+  min_sharpness: 30.0
+  # Umbral de confianza YOLO para aceptar una detección de placa.
+  yolo_confidence: 0.50
+
+ocr:
+  # Idioma de Tesseract.
+  lang: eng
+  # Tiempo máximo de apertura de barrera en segundos.
+  barrier_open_timeout_s: 10
+
+hardware:
+  # Timeout de watchdog M4: si Linux no envía heartbeat en este tiempo, se cierra la barrera.
+  m4_heartbeat_timeout_s: 5
+  # Tiempo máximo para que la barrera complete un movimiento (ms).
+  barrier_move_timeout_ms: 3000
+  # Tiempo mínimo entre lecturas del sensor ultrasónico para anti-rebote (ms).
+  obstacle_debounce_ms: 500
+
+payment:
+  # Tarifa de estacionamiento por evento de acceso (COP).
+  fee_cop: 5000
+
+circuit_breaker:
+  # Fallos consecutivos para abrir el circuito del proveedor de pagos.
+  fail_threshold: 5
+  # Segundos en estado OPEN antes de intentar una sonda (HALF_OPEN).
+  reset_timeout_s: 30
+
+telemetry:
+  # Intervalo entre reportes de métricas del sistema (segundos).
+  interval_s: 30
+  # Umbrales de alerta.
+  thresholds:
+    cpu_percent: 85.0
+    memory_percent: 80.0
+    disk_percent: 90.0
