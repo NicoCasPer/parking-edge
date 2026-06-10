@@ -1,0 +1,80 @@
+# =============================================================================
+# policies.yaml — Parámetros de operación del sistema de parqueadero
+#
+# Leído en arranque por:
+#   - access-orchestrator  (secciones: access, ocr, circuit_breaker)
+#   - ocr_pipeline         (sección: ocr)
+#   - payment-integration  (sección: external_provider, circuit_breaker)
+#
+# Para aplicar cambios: reiniciar el servicio correspondiente vía systemd.
+#   sudo systemctl restart access-orchestrator.service
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OCR — Parámetros del pipeline de visión artificial
+# -----------------------------------------------------------------------------
+ocr:
+  # Confianza mínima de Tesseract para aceptar una lectura (escala 0.0–1.0)
+  confidence_min: 0.85
+
+  # Reintentos ante un frame de baja calidad antes de emitir plate_unreadable
+  max_retries: 3
+
+  # Ventana de tiempo entre reintentos (milisegundos)
+  retry_window_ms: 900
+
+  # Regex de formato de placa colombiana válida
+  plate_regex: "^[A-Z]{3}-[0-9]{3}$"
+
+# -----------------------------------------------------------------------------
+# Access — Lógica de decisión del orquestador
+# -----------------------------------------------------------------------------
+access:
+  # Comportamiento ante fallo de BD o servicio externo:
+  #   FAIL_CLOSED        — denegar acceso (más seguro, recomendado producción)
+  #   FAIL_OPEN_LIMITED  — permitir acceso con log de alerta (mayor disponibilidad)
+  #   ASSISTED           — activar modo asistido con operador
+  default_mode: "FAIL_CLOSED"
+
+  # Minutos de validez del caché local de entradas whitelist
+  whitelist_ttl_min: 120
+
+  # Segundos que espera el modo asistido antes de auto-denegar
+  assisted_timeout_s: 120
+
+# -----------------------------------------------------------------------------
+# External Provider — Cliente del proveedor de pagos
+# (consumido por payment-integration — Integrante A)
+# -----------------------------------------------------------------------------
+external_provider:
+  # Timeout máximo para respuesta del proveedor (milisegundos)
+  timeout_ms: 1200
+
+  # Reintentos ante timeout o error 5xx del proveedor
+  max_retries: 2
+
+  # Tiempo base de espera entre reintentos con backoff exponencial (ms)
+  backoff_base_ms: 400
+
+# -----------------------------------------------------------------------------
+# Circuit Breaker — Protección ante proveedor de pagos inestable
+# (consumido por payment-integration — Integrante A)
+# -----------------------------------------------------------------------------
+circuit_breaker:
+  # Número de fallos consecutivos para abrir el circuito
+  fail_threshold: 5
+
+  # Segundos antes de intentar cerrar el circuito (half-open)
+  reset_timeout_s: 30
+
+# -----------------------------------------------------------------------------
+# Telemetry — connectivity-service
+# -----------------------------------------------------------------------------
+telemetry:
+  # Intervalo entre heartbeats de sistema (segundos)
+  heartbeat_interval_s: 30
+
+  # Umbrales de alerta (se publican como WARNING en el heartbeat)
+  cpu_alert_threshold:    80.0
+  memory_alert_threshold: 85.0
+  disk_alert_threshold:   90.0

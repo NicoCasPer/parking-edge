@@ -1,0 +1,52 @@
+[Unit]
+Description=Parking Edge — Access Orchestrator
+Documentation=https://github.com/parking-edge/docs
+After=network.target mosquitto.service database.service \
+      vision-service.service hardware-controller.service
+Requires=mosquitto.service database.service
+# El orquestador necesita los dos servicios de B arriba para tener sentido,
+# pero no los mata si caen — él mismo aplica FAIL_CLOSED por política interna
+Wants=vision-service.service hardware-controller.service
+
+[Service]
+Type=simple
+User=parking
+Group=parking
+WorkingDirectory=/opt/parking-edge/services/access-orchestrator
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/parking-edge
+# policies.yaml se pasa por variable para facilitar overrides en staging
+Environment=PARKING_POLICIES_PATH=/opt/parking-edge/config/policies.yaml
+EnvironmentFile=-/etc/parking-edge/access-orchestrator.env
+
+ExecStart=/opt/parking-edge/venv/bin/python -m app.main
+
+# Validación de config antes de arrancar el proceso principal
+ExecStartPre=/opt/parking-edge/venv/bin/python \
+    -c "import yaml; yaml.safe_load(open('/opt/parking-edge/config/policies.yaml'))"
+
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+# Seguridad
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Necesita leer la BD SQLite y escribir logs
+ReadWritePaths=/var/log/parking-edge /var/lib/parking-edge
+ReadOnlyPaths=/opt/parking-edge/config
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=access-orchestrator
+
+MemoryMax=128M
+CPUQuota=40%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

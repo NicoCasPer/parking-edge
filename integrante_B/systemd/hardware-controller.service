@@ -1,0 +1,54 @@
+[Unit]
+Description=Parking Edge — Hardware Controller (RPMsg / Barrier)
+Documentation=https://github.com/parking-edge/docs
+After=network.target mosquitto.service m4-firmware.service
+Requires=mosquitto.service m4-firmware.service
+
+# Si el M4 muere, el controlador debe detenerse también (FAIL_CLOSED)
+BindsTo=m4-firmware.service
+
+[Service]
+Type=simple
+User=parking
+Group=parking
+WorkingDirectory=/opt/parking-edge/services/hardware-controller
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/parking-edge
+EnvironmentFile=-/etc/parking-edge/hardware-controller.env
+
+ExecStart=/opt/parking-edge/venv/bin/python -m app.main
+
+# Reintentos conservadores — fallo en barrera es crítico
+Restart=on-failure
+RestartSec=10s
+StartLimitIntervalSec=120s
+StartLimitBurst=3
+
+# Notificación de fallo para alertar al operador
+OnFailure=systemd-notify-send@hardware-controller.service
+
+# Seguridad
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/parking-edge /var/lib/parking-edge
+
+# Acceso al canal RPMsg con el Cortex-M4
+# El rpmsg_client.py abre /dev/rpmsg_ctrl0 o /dev/rpmsg0
+DeviceAllow=/dev/rpmsg_ctrl0 rw
+DeviceAllow=/dev/rpmsg0 rw
+SupplementaryGroups=dialout
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hardware-controller
+
+# Tesseract no corre aquí — límites más ajustados
+MemoryMax=64M
+CPUQuota=20%
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,53 @@
+[Unit]
+Description=Parking Edge — Connectivity Service (Telemetry / Heartbeat)
+Documentation=https://github.com/parking-edge/docs
+After=network.target mosquitto.service
+Requires=mosquitto.service
+# No bloquea el arranque del stack — la telemetría es observabilidad, no control
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=parking
+Group=parking
+WorkingDirectory=/opt/parking-edge/services/connectivity-service
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/parking-edge
+Environment=PARKING_POLICIES_PATH=/opt/parking-edge/config/policies.yaml
+EnvironmentFile=-/etc/parking-edge/connectivity-service.env
+
+ExecStart=/opt/parking-edge/venv/bin/python -m app.main
+
+# Reinicio más agresivo — la telemetría debe recuperarse sola sin alarmar
+Restart=always
+RestartSec=15s
+StartLimitIntervalSec=300s
+StartLimitBurst=10
+
+# Seguridad
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/parking-edge
+
+# psutil necesita leer /proc y /sys para métricas de HW
+# ProtectKernelTunables=true bloquearía /proc/stat — dejarlo en false
+ProtectKernelTunables=false
+ReadOnlyPaths=/proc /sys /opt/parking-edge/config
+
+# Temperatura del SoC (BeaglePlay): /sys/class/thermal/thermal_zone*/temp
+DeviceAllow=char-* r
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=connectivity-service
+
+# Servicio ligero — solo psutil + MQTT cada 30s
+MemoryMax=48M
+CPUQuota=10%
+TasksMax=16
+
+[Install]
+WantedBy=multi-user.target

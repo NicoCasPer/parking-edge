@@ -1,0 +1,49 @@
+[Unit]
+Description=Parking Edge — Vision Service (OCR Pipeline)
+Documentation=https://github.com/parking-edge/docs
+After=network.target mosquitto.service database.service m4-firmware.service
+Requires=mosquitto.service database.service
+Wants=m4-firmware.service
+
+[Service]
+Type=simple
+User=parking
+Group=parking
+WorkingDirectory=/opt/parking-edge/services/vision-service
+
+# Entorno
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/parking-edge
+EnvironmentFile=-/etc/parking-edge/vision-service.env
+
+ExecStart=/opt/parking-edge/venv/bin/python -m app.main
+
+# Reintentos — FAIL_CLOSED: ante fallo se detiene hasta resolverse
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+
+# Seguridad
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/parking-edge /var/lib/parking-edge
+
+# Acceso a cámara (V4L2) y memoria compartida con capture.py del mismo servicio
+DeviceAllow=/dev/video0 rw
+SupplementaryGroups=video
+
+# Logging — journald captura stdout/stderr; el código usa logging estructurado
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vision-service
+
+# Límites de recursos (BeaglePlay A53 — evitar OOM con Tesseract)
+MemoryMax=256M
+CPUQuota=60%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
