@@ -1,22 +1,12 @@
 """
-main.py — Punto de entrada del vision-service.
+main.py — Punto de entrada del vision-service (Migrado a TensorFlow Lite Nativo).
 
 Integra la captura de cámara (Juanito_part) con el bus MQTT (integrante_B):
   1. Se suscribe a parking/events/presence_detected.
   2. Por cada evento, lanza un worker thread para no bloquear el loop principal.
-  3. El worker: captura ráfaga → selecciona mejor frame → YOLO ROI → Tesseract →
+  3. El worker: captura ráfaga → selecciona mejor frame → YOLO ROI TFLite → Tesseract →
      normaliza confianza → OCRPipeline.process() → publica plate_read/unreadable.
   4. Limpia los frames temporales después del procesamiento.
-
-Variables de entorno:
-    MQTT_BROKER_HOST  — default: localhost
-    MQTT_BROKER_PORT  — default: 1883
-    POLICIES_PATH     — ruta a policies.yaml
-    CAMERA_INDEX      — default: 0
-    TMP_CAPTURES_PATH — default: /tmp/parking_captures
-    LANE_ID           — default: ENTRADA-1
-    MODEL_PATH        — ruta al modelo YOLO (default: Modelo/best_plate_yolo11m_int8.tflite)
-    LOG_LEVEL         — default: INFO
 """
 
 import logging
@@ -29,6 +19,7 @@ from typing import Any, Dict, Optional
 
 import cv2
 import numpy as np
+import tensorflow as tf
 
 from services.common.event_bus import EventBus
 from services.common.event_models import Topics
@@ -61,6 +52,82 @@ def _handle_shutdown(signum, frame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Detector YOLO con Motor TensorFlow Lite Nativo
+# ---------------------------------------------------------------------------
+
+class YOLO11TFLiteDetector:
+    """Clase empaquetadora para realizar inferencia YOLO INT8 usando tf.lite."""
+    def __init__(self, model_path: str):
+        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+        self.interpreter.allocate_tensors()
+        
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        
+        # Dimensiones de entrada requeridas por el modelo (.tflite)
+        input_shape = self.input_details[0]['shape']
+        self.model_height = input_shape[1]
+        self.model_width = input_shape[2]
+        self.input_dtype = self.input_details[0]['dtype']
+
+    def detect(self, img_rgb: np.ndarray, conf_threshold: float = 0.25, nms_threshold: float = 0.45) -> list:
+        h_orig, w_orig = img_rgb.shape[:2]
+        
+        # 1. Preprocesar: Redimensionar imagen al tamaño del modelo
+        img_resized = cv2.resize(img_rgb, (self.model_width, self.model_height))
+        input_data = np.expand_dims(img_resized, axis=0)
+        
+        # Manejo de la cuantización INT8 del modelo
+        if self.input_dtype == np.int8 or self.input_dtype == np.uint8:
+            scale, zero_point = self.input_details[0]['quantization']
+            if scale != 0:
+                input_data = (input_data / 255.0 / scale) + zero_point
+            input_data = input_data.astype(self.input_dtype)
+        else:
+            input_data = input_data.astype(np.float32) / 255.0
+            
+        # 2. Inferencia ejecutada directamente en la CPU mediante XNNPACK
+        self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
+        self.interpreter.invoke()
+        
+        # 3. Postprocesar: Extraer salidas brutas y aplicar de-cuantización si aplica
+        output_tensor = self.interpreter.get_tensor(self.output_details[0]['index'])
+        if self.output_details[0]['dtype'] == np.int8 or self.output_details[0]['dtype'] == np.uint8:
+            scale, zero_point = self.output_details[0]['quantization']
+            output_tensor = (output_tensor.astype(np.float32) - zero_point) * scale
+            
+        # Transformar tensor de salida (Squeeze + Transponer para formato YOLOv8/v11)
+        output = np.squeeze(output_tensor).T  # Shape resultante: (8400, 4 + clases)
+        
+        boxes, confidences = [], []
+        for pred in output:
+            scores = pred[4:]
+            confidence = float(np.max(scores))
+            if confidence > conf_threshold:
+                cx, cy, w, h = pred[:4]
+                # Re-escalar coordenadas de formato centro a tamaño original de la cámara
+                x = int((cx - w / 2) * (w_orig / self.model_width))
+                y = int((cy - h / 2) * (h_orig / self.model_height))
+                w_box = int(w * (w_orig / self.model_width))
+                h_box = int(h * (h_orig / self.model_height))
+                
+                boxes.append([x, y, w_box, h_box])
+                confidences.append(confidence)
+                
+        # Non-Maximum Suppression (NMS) nativo de OpenCV para mitigar duplicados
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
+        
+        final_boxes = []
+        if len(indices) > 0:
+            for i in indices.flatten():
+                x, y, w, h = boxes[i]
+                # Retornar en el formato estándar xyxy que espera el recorte posterior
+                final_boxes.append([max(0, x), max(0, y), min(w_orig, x + w), min(h_orig, y + h)])
+                
+        return final_boxes
+
+
+# ---------------------------------------------------------------------------
 # YOLO lazy loader
 # ---------------------------------------------------------------------------
 
@@ -77,11 +144,11 @@ def _get_yolo_model():
             logger.error("Modelo YOLO no encontrado: %s", _MODEL_PATH)
             return None
         try:
-            from ultralytics import YOLO
-            _yolo_model = YOLO(_MODEL_PATH)
-            logger.info("Modelo YOLO cargado: %s", _MODEL_PATH)
+            # Carga del detector TFLite personalizado sin dependencia de Ultralytics
+            _yolo_model = YOLO11TFLiteDetector(_MODEL_PATH)
+            logger.info("Modelo YOLO TFLite cargado correctamente: %s", _MODEL_PATH)
         except Exception as exc:
-            logger.error("Error cargando modelo YOLO: %s", exc)
+            logger.error("Error cargando modelo YOLO TFLite: %s", exc)
         return _yolo_model
 
 
@@ -92,11 +159,6 @@ def _get_yolo_model():
 def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
     """
     Ejecuta Tesseract sobre una imagen ROI y retorna (texto, confianza_0_1).
-    Confianza promedio de los caracteres con conf > 0 (–1 significa no aplica).
-
-    Returns:
-        (texto, confianza) donde confianza está en 0.0–1.0.
-        ("", 0.0) si hay error o ROI vacía.
     """
     if roi_image is None or roi_image.size == 0:
         return "", 0.0
@@ -108,7 +170,6 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
         binarized = cv2.threshold(gray, 0, 255,
                                   cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
-        # image_to_data retorna confianza por palabra (0–100, –1 = no aplica)
         data = pytesseract.image_to_data(
             binarized,
             config=r"--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
@@ -145,8 +206,7 @@ def _process_presence_event(
     lane_id:   str,
 ) -> None:
     """
-    Ejecuta el pipeline completo en un thread worker:
-      capture → select_best_frame → YOLO → Tesseract → OCRPipeline.process()
+    Ejecuta el pipeline completo en un thread worker.
     """
     frames = capture_burst(num_frames=5)
     if not frames:
@@ -154,7 +214,7 @@ def _process_presence_event(
         return
 
     try:
-        # 1. Seleccionar mejor frame (por nitidez Laplaciana)
+        # 1. Seleccionar mejor frame
         best_frame = select_best_frame(frames)
         if best_frame is None:
             logger.warning("Todos los frames son de baja calidad. plate_unreadable.")
@@ -169,7 +229,6 @@ def _process_presence_event(
             return
 
         sharpness_score = laplacian_variance(best_frame)
-        # Normalizar nitidez a 0–1 usando umbral como referencia (>1.0 se satura a 1.0)
         frame_quality = min(sharpness_score / (MIN_SHARPNESS_THRESHOLD * 10), 1.0)
 
         # 2. Cargar imagen
@@ -180,7 +239,7 @@ def _process_presence_event(
             return
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # 3. Detección de placa con YOLO
+        # 3. Detección de placa con YOLO TFLite
         model = _get_yolo_model()
         if model is None:
             logger.warning("Modelo YOLO no disponible. plate_unreadable.")
@@ -188,8 +247,8 @@ def _process_presence_event(
                              lane_id=lane_id, trace_id=trace_id)
             return
 
-        results = model(img_rgb, verbose=False)
-        boxes = results[0].boxes.xyxy.cpu().numpy() if results else []
+        # LLAMADA AL NUEVO DETECTOR NATIVO
+        boxes = model.detect(img_rgb)
 
         if len(boxes) == 0:
             logger.info("YOLO no detectó placa en el frame.")
@@ -197,6 +256,7 @@ def _process_presence_event(
                              lane_id=lane_id, trace_id=trace_id)
             return
 
+        # Extracción limpia de coordenadas
         x1, y1, x2, y2 = map(int, boxes[0])
         h, w = img_rgb.shape[:2]
         roi = img_rgb[
@@ -218,10 +278,10 @@ def _process_presence_event(
             raw_text, confidence, frame_quality,
         )
 
-        # 5. Publicar evento MQTT (plate_read o plate_unreadable)
+        # 5. Publicar evento MQTT
         pipeline.process(
             text=raw_text,
-            confidence=confidence,     # ya está en 0.0–1.0
+            confidence=confidence,
             evidence_id=best_frame,
             frame_quality=frame_quality,
             lane_id=lane_id,
@@ -241,7 +301,6 @@ def _make_presence_handler(pipeline: OCRPipeline, lane_id: str):
         trace_id = envelope.get("trace_id")
         logger.info("presence_detected recibido | trace_id=%s", trace_id)
 
-        # Lanzar en thread para no bloquear el loop MQTT ni el heartbeat del M4
         t = threading.Thread(
             target=_process_presence_event,
             args=(pipeline, trace_id, lane_id),
@@ -261,7 +320,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT,  _handle_shutdown)
 
-    logger.info("vision-service iniciando...")
+    logger.info("vision-service iniciando con soporte TFLite...")
 
     lane_id = os.getenv("LANE_ID", _LANE_ID)
 
@@ -278,7 +337,6 @@ def main() -> None:
     )
     pipeline = OCRPipeline(event_bus=bus, policies_path=policies_path, lane_id=lane_id)
 
-    # Suscribir al evento de presencia de vehículo (publicado por hardware-controller)
     bus.subscribe(Topics.PRESENCE_DETECTED, _make_presence_handler(pipeline, lane_id))
 
     logger.info("vision-service listo | lane=%s model=%s", lane_id, _MODEL_PATH)

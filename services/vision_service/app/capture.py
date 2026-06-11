@@ -23,7 +23,7 @@ TMP_DIR = os.getenv("TMP_CAPTURES_PATH", "/tmp/parking_captures")
 
 def capture_burst(num_frames: int = 5) -> List[str]:
     """
-    Captura una ráfaga rápida de frames desde la cámara CSI.
+    Captura una ráfaga rápida de frames desde una cámara USB.
 
     Abre la cámara, captura num_frames imágenes separadas 50 ms entre sí
     y cierra la cámara al finalizar. Los frames se guardan con timestamp

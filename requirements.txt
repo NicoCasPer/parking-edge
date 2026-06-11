@@ -8,9 +8,10 @@ paho-mqtt>=1.6.1
 # BeaglePlay ARM: usar opencv-python-headless para evitar dependencias de GUI
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
+tensorflow>=2.14.0
 
-# YOLO INT8 TFLite — usar ultralytics solo para inferencia (no entrenamiento)
-ultralytics>=8.0.197
+# YOLO INT8 TFLite — inferencia con TensorFlow Lite nativo
+# El modelo se carga directamente desde un archivo .tflite
 
 # OCR
 pytesseract>=0.3.10

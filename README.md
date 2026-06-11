@@ -178,7 +178,7 @@ Para probar sin hardware físico, activar el modo simulado:
 ```bash
 export RPMSG_SIMULATED=true
 export MOCK_PAYMENT_SERVER=true
-export CAMERA_INDEX=0        # cámara de la laptop
+export CAMERA_INDEX=0        # cámara USB local / BeaglePlay
 export DB_PATH=/tmp/parking.db
 ```
 

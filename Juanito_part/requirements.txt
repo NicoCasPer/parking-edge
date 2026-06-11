@@ -19,9 +19,13 @@ Pillow==10.0.0
 # Logging y debugging
 colorlog==6.7.0
 
-# API REST (opcional, para futuras extensiones)
-# flask==3.0.0
-# requests==2.31.0
+# API REST y Dashboard
+Flask==3.0.0
+Flask-CORS==4.0.0
+Werkzeug==3.0.0
+
+# Utilitarios
+requests==2.31.0
 
 # Base de datos (opcional)
 # psycopg2-binary==2.9.7
