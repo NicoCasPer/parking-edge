@@ -4,6 +4,10 @@
 # ── MQTT ─────────────────────────────────────────────────────────────────────
 paho-mqtt>=1.6.1
 
+# ── Hardware / UART (ESP32 WROOM-32 reemplaza al M4) ──────────────────────────
+# Comunicación serie con el ESP32 que maneja los GPIOs (HC-SR04, barrera).
+pyserial>=3.5
+
 # ── Visión artificial ────────────────────────────────────────────────────────
 # BeaglePlay ARM: usar opencv-python-headless para evitar dependencias de GUI
 opencv-python-headless>=4.8.0

@@ -1,18 +1,23 @@
 """
 main.py — Punto de entrada del hardware-controller.
 
-Correcciones respecto a integrante_B:
-  - Hilo dedicado de heartbeat que envía "HEARTBEAT" al M4 cada
+Transporte hacia los GPIOs: UART hacia el ESP32 WROOM-32 (SerialClient), que
+reemplaza al antiguo M4/RPMsg. Para volver al M4 bastaría con reinstanciar
+RPMsgClient (la interfaz es idéntica).
+
+Detalles:
+  - Hilo dedicado de heartbeat que envía "HEARTBEAT" al ESP32 cada
     HEARTBEAT_INTERVAL_S segundos (default 1.0). Este hilo es independiente
     del loop principal y del procesamiento MQTT, garantizando que el watchdog
-    del M4 siempre reciba latidos aunque Linux esté ocupado.
+    del ESP32 siempre reciba latidos aunque Linux esté ocupado.
 
 Variables de entorno:
     MQTT_BROKER_HOST        — default: localhost
     MQTT_BROKER_PORT        — default: 1883
-    RPMSG_DEVICE            — default: /dev/rpmsg0
-    RPMSG_SIMULATED         — "true" para desarrollo sin BeaglePlay
-    HEARTBEAT_INTERVAL_S    — segundos entre heartbeats al M4 (default: 1.0)
+    UART_DEVICE             — default: /dev/ttyS2
+    UART_BAUDRATE           — default: 115200
+    UART_SIMULATED          — "true" para desarrollo sin ESP32
+    HEARTBEAT_INTERVAL_S    — segundos entre heartbeats al ESP32 (default: 1.0)
     LANE_ID                 — default: ENTRADA-1
     LOG_LEVEL               — default: INFO
 """
@@ -26,7 +31,7 @@ import time
 
 from services.common.event_bus import EventBus
 from services.hardware_controller.app.command_dispatcher import CommandDispatcher
-from services.hardware_controller.app.rpmsg_client import RPMsgClient
+from services.hardware_controller.app.serial_client import SerialClient
 
 logging.basicConfig(
     level=logging.getLevelName(os.getenv("LOG_LEVEL", "INFO")),
@@ -48,18 +53,18 @@ def _handle_shutdown(signum, frame) -> None:
     _stop_event.set()
 
 
-def _heartbeat_loop(rpmsg: RPMsgClient) -> None:
+def _heartbeat_loop(link: SerialClient) -> None:
     """
-    Hilo dedicado: envía HEARTBEAT al M4 cada HEARTBEAT_INTERVAL_S segundos.
-    Garantiza que el watchdog del M4 recibe latidos aunque el procesamiento
+    Hilo dedicado: envía HEARTBEAT al ESP32 cada HEARTBEAT_INTERVAL_S segundos.
+    Garantiza que el watchdog del ESP32 recibe latidos aunque el procesamiento
     de visión o MQTT esté ocupado.
     """
-    logger.info("Heartbeat hacia M4 iniciado | interval=%.1fs", _HEARTBEAT_INTERVAL_S)
+    logger.info("Heartbeat hacia ESP32 iniciado | interval=%.1fs", _HEARTBEAT_INTERVAL_S)
     while not _stop_event.wait(timeout=_HEARTBEAT_INTERVAL_S):
         try:
-            rpmsg.send_command("HEARTBEAT", "heartbeat")
+            link.send_command("HEARTBEAT", "heartbeat")
         except Exception as exc:
-            logger.warning("Error enviando HEARTBEAT al M4: %s", exc)
+            logger.warning("Error enviando HEARTBEAT al ESP32: %s", exc)
     logger.info("Hilo de heartbeat detenido.")
 
 
@@ -79,30 +84,30 @@ def main() -> None:
         logger.critical("No se puede conectar al broker MQTT: %s — abortando.", exc)
         sys.exit(1)
 
-    # 2. Canal RPMsg hacia el M4
-    rpmsg = RPMsgClient()
+    # 2. Canal UART hacia el ESP32
+    link = SerialClient()
     try:
-        rpmsg.open()
+        link.open()
     except OSError as exc:
-        logger.critical("No se puede abrir RPMsg: %s — abortando.", exc)
+        logger.critical("No se puede abrir el UART: %s — abortando.", exc)
         bus.disconnect()
         sys.exit(1)
 
-    # 3. Dispatcher: conecta bus ↔ M4
-    _dispatcher = CommandDispatcher(event_bus=bus, rpmsg_client=rpmsg)
+    # 3. Dispatcher: conecta bus ↔ ESP32 (la interfaz es la misma que RPMsgClient)
+    _dispatcher = CommandDispatcher(event_bus=bus, rpmsg_client=link)
 
-    # 4. Hilo de heartbeat hacia M4 (independiente del loop principal)
+    # 4. Hilo de heartbeat hacia el ESP32 (independiente del loop principal)
     hb_thread = threading.Thread(
         target=_heartbeat_loop,
-        args=(rpmsg,),
+        args=(link,),
         daemon=True,
-        name="m4-heartbeat",
+        name="esp32-heartbeat",
     )
     hb_thread.start()
 
     logger.info(
         "hardware-controller listo | lane=%s device=%s simulated=%s",
-        lane_id, rpmsg.device, rpmsg._simulated,
+        lane_id, link.device, link._simulated,
     )
 
     try:
@@ -112,7 +117,7 @@ def main() -> None:
         logger.info("Cerrando hardware-controller...")
         _stop_event.set()
         hb_thread.join(timeout=3.0)
-        rpmsg.close()
+        link.close()
         bus.disconnect()
         logger.info("hardware-controller detenido.")
 
