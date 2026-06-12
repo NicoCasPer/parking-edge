@@ -19,8 +19,34 @@
 /** HC-SR04 ECHO — entrada. REQUIERE divisor de voltaje 5V->3.3V (ver README) */
 #define ECHO_PIN_NUM            (18)
 
-/** Barrera/servo — salida digital. LOW = cerrada (estado seguro al arranque) */
+/** Barrera/servo — pin de señal PWM del servo. */
 #define SERVO_BARRIER_PIN_NUM   (19)
+
+/* =========================================================================
+ * SERVO (PWM por LEDC) — movimiento fijo de 90°
+ *
+ * La barrera es un servo: CLOSE lo deja a 0° (posición de reposo) y OPEN lo
+ * gira 90° hacia un lado. Así el movimiento es siempre fijo y estable, sin el
+ * "tembleque" de abrir/cerrar que producía el control digital on/off.
+ *
+ * Servo estándar: 50 Hz, ancho de pulso 1.0 ms (0°) … 2.0 ms (180°).
+ *   0°  -> 1000 us   (CLOSE / reposo)
+ *   90° -> 1500 us   (OPEN  / barrera levantada)
+ * ========================================================================= */
+
+/** Ancho de pulso para barrera CERRADA (0°), en microsegundos */
+#define SERVO_CLOSE_US          (1000U)
+
+/** Ancho de pulso para barrera ABIERTA (90°), en microsegundos */
+#define SERVO_OPEN_US           (1500U)
+
+/** Periodo del servo (50 Hz = 20000 us) */
+#define SERVO_PERIOD_US         (20000U)
+
+/** Canal, frecuencia y resolución del periférico LEDC del ESP32 */
+#define SERVO_LEDC_CHANNEL      (0)
+#define SERVO_LEDC_FREQ_HZ      (50)
+#define SERVO_LEDC_RES_BITS     (16)
 
 /** UART2 hacia la BeaglePlay (RX2/TX2). Cableado CRUZADO: TX2->RX_beagle */
 #define UART_BEAGLE_RX_PIN      (16)

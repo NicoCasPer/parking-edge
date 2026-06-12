@@ -31,6 +31,7 @@ from typing import Any, Dict
 import paho.mqtt.client as mqtt
 from flask import Flask, jsonify, request, send_from_directory, session
 from flask_socketio import SocketIO, emit
+from werkzeug.utils import secure_filename
 
 from web_dashboard.backend.auth import authenticate, has_permission
 
@@ -55,6 +56,10 @@ socketio = SocketIO(
 
 # ── Base de datos (lazy SQLite) ───────────────────────────────────────────────
 _DB_PATH = os.getenv("DB_PATH", "/var/lib/parking/parking.db")
+
+# ── Evidencia de cámara (frames que el vision-service preserva) ────────────────
+# Debe coincidir con EVIDENCE_PATH del vision-service (capture.py).
+_EVIDENCE_PATH = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
 
 
 def _get_db():
@@ -119,6 +124,75 @@ def get_events():
     except Exception as exc:
         logger.error("Error consultando eventos: %s", exc)
         return jsonify({"error": "Error de base de datos"}), 500
+
+
+@app.route("/api/payments")
+@require_auth("read")
+def get_payments():
+    """
+    Últimos pagos: qué placas pagaron y cuáles no, según la tabla payment_events.
+
+    Robusto a las dos variantes de esquema del proyecto (schema.sql usa
+    created_at/provider_tx_id; el fallback inline usa paid_at/transaction_id):
+    se hace SELECT * y se normalizan los campos.
+    """
+    limit = min(int(request.args.get("limit", 50)), 200)
+    try:
+        with _get_db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM payment_events ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            out.append({
+                "plate":      d.get("plate"),
+                "amount_cop": d.get("amount_cop"),
+                "status":     d.get("status"),
+                "tx":         d.get("provider_tx_id") or d.get("transaction_id"),
+                "created_at": d.get("created_at") or d.get("paid_at") or d.get("processed_at"),
+            })
+        return jsonify(out)
+    except Exception as exc:
+        logger.error("Error consultando pagos: %s", exc)
+        return jsonify({"error": "Error de base de datos"}), 500
+
+
+@app.route("/api/captures")
+@require_auth("read")
+def list_captures():
+    """
+    Lista las capturas de cámara preservadas por el vision-service, de la más
+    reciente a la más antigua. El frontend muestra la última y una galería.
+    """
+    limit = min(int(request.args.get("limit", 12)), 60)
+    try:
+        if not os.path.isdir(_EVIDENCE_PATH):
+            return jsonify([])
+        items = []
+        for name in os.listdir(_EVIDENCE_PATH):
+            if not name.lower().endswith(".jpg") or name == "latest.jpg":
+                continue
+            path = os.path.join(_EVIDENCE_PATH, name)
+            items.append({"file": name, "mtime": os.path.getmtime(path)})
+        items.sort(key=lambda x: x["mtime"], reverse=True)
+        return jsonify(items[:limit])
+    except Exception as exc:
+        logger.error("Error listando capturas: %s", exc)
+        return jsonify({"error": "Error leyendo capturas"}), 500
+
+
+@app.route("/api/captures/<path:filename>")
+@require_auth("read")
+def serve_capture(filename):
+    """Sirve un JPEG de evidencia. Protegido contra path traversal."""
+    safe = secure_filename(filename)
+    if not safe.lower().endswith(".jpg"):
+        return jsonify({"error": "Archivo no permitido"}), 400
+    full = os.path.join(_EVIDENCE_PATH, safe)
+    if not os.path.isfile(full):
+        return jsonify({"error": "No encontrado"}), 404
+    return send_from_directory(_EVIDENCE_PATH, safe, mimetype="image/jpeg")
 
 
 @app.route("/api/whitelist", methods=["GET"])

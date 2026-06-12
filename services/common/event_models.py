@@ -35,6 +35,11 @@ class Topics:
     ASSISTED_MODE     = f"{PREFIX}/events/assisted_mode"
     SYSTEM_HEARTBEAT  = f"{PREFIX}/events/system_heartbeat"
 
+    # Estado físico confirmado por el hardware-controller (barrier_opened/closed,
+    # hardware_fault). DEBE ser distinto de BARRIER_COMMAND para no realimentar
+    # al dispatcher con sus propias confirmaciones (bucle de OPEN/CLOSE).
+    BARRIER_EVENT     = f"{PREFIX}/events/barrier"
+
     # Pagos
     PAYMENT_EVENT     = f"{PREFIX}/events/payment"
 

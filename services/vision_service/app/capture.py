@@ -8,10 +8,12 @@ Adaptado de Juanito_part/Modulo_vision/capture.py con las siguientes mejoras:
   - Función cleanup_frames() para liberar espacio en disco tras el procesamiento.
 """
 
+import glob
 import logging
 import os
+import shutil
 import time
-from typing import List
+from typing import List, Optional
 
 import cv2
 
@@ -19,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 TMP_DIR = os.getenv("TMP_CAPTURES_PATH", "/tmp/parking_captures")
+
+# Directorio persistente de evidencia que el dashboard sirve para mostrar
+# "lo que vio la cámara". A diferencia de TMP_DIR, NO se limpia tras procesar:
+# se conserva una ventana rodante de las últimas EVIDENCE_MAX_FILES capturas.
+EVIDENCE_DIR       = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
+EVIDENCE_MAX_FILES = int(os.getenv("EVIDENCE_MAX_FILES", "30"))
+# Nombre fijo del último frame, para previsualización rápida en el dashboard.
+EVIDENCE_LATEST    = "latest.jpg"
 
 
 def capture_burst(num_frames: int = 5) -> List[str]:
@@ -73,6 +83,60 @@ def capture_burst(num_frames: int = 5) -> List[str]:
         len(saved_paths), num_frames, TMP_DIR,
     )
     return saved_paths
+
+
+def save_evidence(frame_path: str, trace_id: Optional[str] = None) -> Optional[str]:
+    """
+    Conserva una copia del frame de evidencia en EVIDENCE_DIR para que el
+    dashboard pueda mostrar lo que vio la cámara.
+
+    Copia `frame_path` a EVIDENCE_DIR con un nombre único (timestamp + trace_id),
+    actualiza el alias `latest.jpg` y purga las capturas más antiguas dejando
+    como máximo EVIDENCE_MAX_FILES. Se llama ANTES de cleanup_frames().
+
+    Args:
+        frame_path: Ruta del frame a preservar (típicamente el mejor frame).
+        trace_id:   Id de trazabilidad del evento, para nombrar el archivo.
+
+    Returns:
+        Ruta del archivo de evidencia guardado, o None si falló.
+    """
+    if not frame_path or not os.path.exists(frame_path):
+        return None
+
+    try:
+        os.makedirs(EVIDENCE_DIR, exist_ok=True)
+        ts   = int(time.time() * 1000)
+        tag  = (trace_id or "evt").split("-")[0]
+        dest = os.path.join(EVIDENCE_DIR, f"{ts}_{tag}.jpg")
+
+        shutil.copyfile(frame_path, dest)
+        # Alias estable para la previsualización en vivo del dashboard.
+        shutil.copyfile(frame_path, os.path.join(EVIDENCE_DIR, EVIDENCE_LATEST))
+
+        _prune_evidence()
+        logger.info("Evidencia guardada para el dashboard: %s", dest)
+        return dest
+    except Exception as exc:
+        logger.warning("No se pudo guardar evidencia desde %s: %s", frame_path, exc)
+        return None
+
+
+def _prune_evidence() -> None:
+    """Mantiene solo las EVIDENCE_MAX_FILES capturas más recientes (excluye latest)."""
+    try:
+        files = [
+            p for p in glob.glob(os.path.join(EVIDENCE_DIR, "*.jpg"))
+            if os.path.basename(p) != EVIDENCE_LATEST
+        ]
+        files.sort(key=os.path.getmtime, reverse=True)
+        for old in files[EVIDENCE_MAX_FILES:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+    except Exception as exc:
+        logger.debug("Error purgando evidencia: %s", exc)
 
 
 def cleanup_frames(frame_paths: List[str]) -> None:

@@ -62,6 +62,8 @@ function onLoginSuccess(username, role) {
 
   connectSocket();
   loadEvents();
+  loadPayments();
+  startCameraPolling();
   loadWhitelistStats();
   if (role === "admin") loadWhitelist();
 }
@@ -101,6 +103,17 @@ function handleMqttEvent(topic, payload) {
       reason:       payload.payload?.reason || "—",
       confidence:   payload.payload?.confidence,
     });
+  }
+
+  // Pago registrado → refrescar tabla de pagos desde la BD (fuente de verdad).
+  if (topic.includes("/events/payment")) {
+    loadPayments();
+  }
+
+  // Nuevo vehículo o decisión → la cámara acaba de capturar evidencia: refrescar pronto.
+  if (topic.includes("presence_detected") ||
+      topic.includes("access_granted") || topic.includes("access_denied")) {
+    setTimeout(loadCaptures, 1500);
   }
 }
 
@@ -218,6 +231,112 @@ async function loadWhitelist() {
     $("stat-whitelist").textContent = rows.length;
   } catch { /* tabla vacía */ }
 }
+
+// ── Pagos ────────────────────────────────────────────────────────────────────
+
+function moneyCOP(n) {
+  return n != null ? "$" + Number(n).toLocaleString("es-CO") : "—";
+}
+
+function paymentStatusClass(status) {
+  const s = (status || "").toUpperCase();
+  if (s === "APPROVED" || s === "OK" || s === "DUPLICATE") return "pay-approved";
+  if (s === "FAILED")  return "pay-failed";
+  return "pay-pending";  // PENDING, QUEUED, etc.
+}
+
+function isApproved(status) {
+  const s = (status || "").toUpperCase();
+  return s === "APPROVED" || s === "OK" || s === "DUPLICATE";
+}
+
+async function loadPayments() {
+  try {
+    const res = await fetch("/api/payments?limit=50");
+    if (!res.ok) return;
+    const rows = await res.json();
+    const tbody = $("payments-body");
+    tbody.innerHTML = "";
+    let approved = 0;
+    rows.forEach(p => {
+      tbody.appendChild(buildPaymentRow(p));
+      if (isApproved(p.status)) approved++;
+    });
+    $("payment-count").textContent  = rows.length;
+    $("stat-payments").textContent  = approved;
+  } catch { /* tabla vacía */ }
+}
+
+function buildPaymentRow(p) {
+  const tr = document.createElement("tr");
+  const cls = paymentStatusClass(p.status);
+  tr.innerHTML = `
+    <td>${formatTime(p.created_at)}</td>
+    <td><strong>${p.plate || "—"}</strong></td>
+    <td>${moneyCOP(p.amount_cop)}</td>
+    <td class="${cls}">${(p.status || "—").toUpperCase()}</td>
+  `;
+  return tr;
+}
+
+// ── Cámara (evidencia capturada por el vision-service) ───────────────────────
+
+let _cameraTimer = null;
+
+function startCameraPolling() {
+  loadCaptures();
+  if (_cameraTimer) clearInterval(_cameraTimer);
+  _cameraTimer = setInterval(loadCaptures, 3000);
+}
+
+function captureUrl(item) {
+  return `/api/captures/${encodeURIComponent(item.file)}?t=${Math.floor(item.mtime)}`;
+}
+
+async function loadCaptures() {
+  try {
+    const res = await fetch("/api/captures?limit=12");
+    if (!res.ok) return;
+    const items = await res.json();
+
+    const img   = $("camera-latest");
+    const empty = $("camera-empty");
+    const gal   = $("camera-gallery");
+
+    if (!Array.isArray(items) || items.length === 0) {
+      img.classList.add("hidden");
+      empty.classList.remove("hidden");
+      gal.innerHTML = "";
+      $("capture-count").textContent = 0;
+      return;
+    }
+
+    empty.classList.add("hidden");
+    img.classList.remove("hidden");
+
+    // Última captura como vista principal (solo recargar si cambió).
+    const latestUrl = captureUrl(items[0]);
+    if (img.dataset.src !== latestUrl) {
+      img.src = latestUrl;
+      img.dataset.src = latestUrl;
+    }
+
+    // Galería de las capturas recientes; clic = verla en grande.
+    gal.innerHTML = "";
+    items.forEach(it => {
+      const thumb = document.createElement("img");
+      thumb.className = "camera-thumb";
+      thumb.src = captureUrl(it);
+      thumb.title = new Date(it.mtime * 1000).toLocaleString("es-CO");
+      thumb.addEventListener("click", () => { img.src = thumb.src; });
+      gal.appendChild(thumb);
+    });
+
+    $("capture-count").textContent = items.length;
+  } catch { /* sin capturas */ }
+}
+
+// ── Whitelist ────────────────────────────────────────────────────────────────
 
 $("whitelist-form").addEventListener("submit", async e => {
   e.preventDefault();

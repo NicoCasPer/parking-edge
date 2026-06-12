@@ -8,12 +8,16 @@ Correcciones respecto a integrante_B:
   - El heartbeat periódico hacia el M4 se gestiona en main.py (hilo dedicado)
     y no en este dispatcher.
 
-Flujo:
-    M4 → "PRESENCE_DETECTED"            → MQTT presence_detected
-    MQTT access_granted                  → M4 "OPEN:<trace_id>"
-    MQTT barrier_command (OPEN/CLOSE/STOP) → M4 "<ACTION>:<trace_id>"
-    M4 "OPEN:OK:<trace_id>"              → MQTT barrier_opened
-    M4 "HARDWARE_FAULT:<reason>"         → MQTT hardware_fault
+Flujo (M4 se sustituyó por ESP32, pero el protocolo de texto es idéntico):
+    ESP32 → "PRESENCE_DETECTED"             → MQTT events/presence_detected
+    MQTT commands/barrier (OPEN/CLOSE/STOP) → ESP32 "<ACTION>:<trace_id>"
+    MQTT events/access_granted               → ESP32 "OPEN:<trace_id>"
+    ESP32 "OPEN:OK:<trace_id>"              → MQTT events/barrier (barrier_opened)
+    ESP32 "HARDWARE_FAULT:<reason>"         → MQTT events/barrier (hardware_fault)
+
+IMPORTANTE: las confirmaciones se publican en events/barrier, NUNCA en
+commands/barrier. Publicarlas en el tópico de comandos haría que este dispatcher
+reprocesara su propia confirmación como un nuevo comando → bucle de OPEN/CLOSE.
 """
 
 import logging
@@ -145,13 +149,17 @@ class CommandDispatcher:
         else:
             return
         try:
+            # OJO: se publica en BARRIER_EVENT (events/), NO en BARRIER_COMMAND.
+            # Publicarlo en el tópico de comandos haría que este mismo dispatcher
+            # reprocese su confirmación como un nuevo comando → bucle infinito de
+            # OPEN/CLOSE en el servo.
             self.bus.publish(
-                topic=Topics.BARRIER_COMMAND,
+                topic=Topics.BARRIER_EVENT,
                 payload={"action": action, "status": "confirmed", "domain": "mcu"},
                 event_type=event_type,
                 trace_id=trace_id,
             )
-            logger.info("%s confirmado por M4 | trace_id=%s", event_type, trace_id)
+            logger.info("%s confirmado por ESP32 | trace_id=%s", event_type, trace_id)
         except Exception as exc:
             logger.error("Error publicando %s: %s", event_type, exc)
 
@@ -159,9 +167,10 @@ class CommandDispatcher:
         self, reason: str, trace_id: str = "autonomous"
     ) -> None:
         try:
+            # En BARRIER_EVENT (events/), nunca en BARRIER_COMMAND (ver nota arriba).
             self.bus.publish(
-                topic=Topics.BARRIER_COMMAND,
-                payload={"reason": reason, "domain": "mcu", "source": "m4_firmware"},
+                topic=Topics.BARRIER_EVENT,
+                payload={"reason": reason, "domain": "mcu", "source": "esp32_firmware"},
                 event_type="hardware_fault",
                 trace_id=trace_id,
             )

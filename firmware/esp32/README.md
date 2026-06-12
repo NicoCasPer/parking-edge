@@ -31,7 +31,7 @@ firmware/esp32/
 |-------------------------|--------|----------------------------------------------------|
 | HC-SR04 TRIGGER         | GPIO5  | Salida.                                            |
 | HC-SR04 ECHO            | GPIO18 | Entrada. **Divisor de voltaje 5 V→3.3 V (abajo).** |
-| Barrera/servo           | GPIO19 | Salida digital. LOW = cerrada.                     |
+| Barrera (servo PWM)     | GPIO19 | Señal del servo (LEDC 50 Hz). 0°=cerrada, 90°=abierta. |
 | UART2 TX → RX Beagle    | GPIO17 |                                                    |
 | UART2 RX ← TX Beagle    | GPIO16 |                                                    |
 | Debug (UART0/USB)       | GPIO1/3| Logs. No usar para datos.                          |
@@ -58,6 +58,17 @@ ECHO (5V) ──[ R1 = 1 kΩ ]──┬── GPIO18 (ESP32)
 ```
 TRIGGER puede ir directo (3.3 V se lee como HIGH). Alimentar el HC-SR04 con 5 V
 (VIN/USB del ESP32 o fuente externa) y GND común.
+
+### Barrera = servo (movimiento fijo de 90°)
+
+La barrera es un servo controlado por PWM (LEDC, 50 Hz) en GPIO19:
+- `CLOSE` → **0°** (1000 µs), posición de reposo.
+- `OPEN`  → **90°** (1500 µs), barrera levantada.
+
+El servo mantiene la posición de forma estable; ya **no** se usa el control digital
+on/off que producía el tembleque de abrir/cerrar. Alimenta el servo con **5 V
+externos** (no desde el 3.3 V del ESP32) y **GND común**. Si tu servo recorre poco
+o demasiado, ajusta `SERVO_CLOSE_US`/`SERVO_OPEN_US` en `include/config.h`.
 
 ## Compilar y flashear (PlatformIO)
 

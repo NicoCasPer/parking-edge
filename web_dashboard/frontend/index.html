@@ -48,6 +48,10 @@
         <span class="stat-value" id="stat-whitelist">—</span>
         <span class="stat-label">Placas en whitelist</span>
       </div>
+      <div class="stat-card">
+        <span class="stat-value" id="stat-payments">—</span>
+        <span class="stat-label">Pagos aprobados</span>
+      </div>
     </section>
 
     <!-- Control de barrera (solo operator/admin) -->
@@ -59,6 +63,36 @@
         <button class="btn-close" onclick="sendBarrier('CLOSE')">Cerrar</button>
       </div>
       <p id="barrier-feedback" class="feedback"></p>
+    </section>
+
+    <!-- Cámara: lo que vio la cámara USB (evidencia preservada) -->
+    <section class="card">
+      <h2>Cámara <span id="capture-count" class="badge">0</span></h2>
+      <div class="camera-wrap">
+        <img id="camera-latest" class="camera-latest hidden" alt="Última captura de la cámara" />
+        <p id="camera-empty" class="feedback">
+          Sin capturas todavía. Aparecerán automáticamente cuando se detecte un vehículo.
+        </p>
+      </div>
+      <div id="camera-gallery" class="camera-gallery"></div>
+    </section>
+
+    <!-- Pagos: qué placas pagaron y cuáles no -->
+    <section class="card">
+      <h2>Pagos <span id="payment-count" class="badge">0</span></h2>
+      <div class="table-wrapper">
+        <table id="payments-table">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Placa</th>
+              <th>Monto</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="payments-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Eventos en tiempo real -->

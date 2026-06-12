@@ -23,7 +23,7 @@ import tensorflow as tf
 
 from services.common.event_bus import EventBus
 from services.common.event_models import Topics
-from services.vision_service.app.capture import capture_burst, cleanup_frames
+from services.vision_service.app.capture import capture_burst, cleanup_frames, save_evidence
 from services.vision_service.app.frame_selector import select_best_frame
 from services.vision_service.app.quality import laplacian_variance, MIN_SHARPNESS_THRESHOLD
 from services.vision_service.app.ocr_pipeline import OCRPipeline
@@ -216,6 +216,11 @@ def _process_presence_event(
     try:
         # 1. Seleccionar mejor frame
         best_frame = select_best_frame(frames)
+
+        # Preservar evidencia para el dashboard (lo que vio la cámara), aunque
+        # la placa resulte ilegible. Usa el mejor frame o, si no hay, el primero.
+        save_evidence(best_frame or frames[0], trace_id)
+
         if best_frame is None:
             logger.warning("Todos los frames son de baja calidad. plate_unreadable.")
             pipeline.process(

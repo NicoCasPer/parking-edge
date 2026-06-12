@@ -242,6 +242,48 @@ tr:hover td { background: rgba(255,255,255,.02); }
 .decision-granted { color: var(--green); font-weight: 600; }
 .decision-denied  { color: var(--red);   font-weight: 600; }
 
+/* ── Estados de pago ──────────────────────────────────────────────────────── */
+.pay-approved { color: var(--green);  font-weight: 600; }
+.pay-pending  { color: var(--yellow); font-weight: 600; }
+.pay-failed   { color: var(--red);    font-weight: 600; }
+
+/* ── Cámara ───────────────────────────────────────────────────────────────── */
+.camera-wrap {
+  display: flex;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 180px;
+  align-items: center;
+  overflow: hidden;
+}
+
+.camera-latest {
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  display: block;
+}
+
+.camera-gallery {
+  display: flex;
+  gap: .5rem;
+  flex-wrap: wrap;
+  margin-top: .75rem;
+}
+
+.camera-thumb {
+  width: 96px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color .2s, transform .1s;
+}
+.camera-thumb:hover { border-color: var(--accent); transform: scale(1.04); }
+
 /* ── Whitelist form ───────────────────────────────────────────────────────── */
 .whitelist-form {
   display: flex;
