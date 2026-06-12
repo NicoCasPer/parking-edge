@@ -18,7 +18,7 @@ SDK_PATH ?= /opt/ti/mcu_plus_sdk
 FREERTOS_PATH ?= /opt/freertos
 
 # Archivos fuente
-SOURCES = main.c sensor_driver.c rpmsg_interface.c watchdog.c
+SOURCES = src/main.c src/sensor_driver.c scr/rpmsg_interface.c scr/watchdog.c
 OBJECTS = $(SOURCES:.c=.o)
 TARGET = m4_firmware.elf
 TARGET_BIN = m4_firmware.bin

@@ -32,7 +32,7 @@
 /* Números de pin dentro del banco MCU_GPIO0 */
 #define TRIGGER_PIN_NUM         (0U)   /* MCU_GPIO0_0  — J5 pin 1 */
 #define ECHO_PIN_NUM            (2U)   /* MCU_GPIO0_2  — J5 pin 3 */
-#define SERVO_BARRIER_PIN_NUM   (8U)   /* MCU_GPIO0_8  — J5 pin 9 */
+#define SERVO_BARRIER_PIN_NUM   (15U)   /* MCU_GPIO0_8  — J5 pin 9 */
 
 /* Umbral de detección de presencia */
 #define DISTANCE_THRESHOLD_CM   (50U)
