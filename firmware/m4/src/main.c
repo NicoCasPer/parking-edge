@@ -9,17 +9,13 @@
  *      RPMSG_TASK_STACK_SIZE definidos en config.h)
  *   5. Iniciar scheduler
  */
-
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
 #include "config.h"
+#include "watchdog.h"
 #include "sensor_driver.h"
 #include "rpmsg_interface.h"
-#include "watchdog.h"
-
-#include <kernel/dpl/DebugP.h>
-#include <drivers/gpio.h>
 
 SemaphoreHandle_t xBarrierMutex = NULL;
 
@@ -31,6 +27,7 @@ int main(void)
                FW_VERSION_STR, FW_BUILD_DATE, FW_BUILD_TIME);
 
     /* 1. Barrera: salida, LOW = estado seguro al arranque */
+/* Por esto (en v12 la constante correcta es sin la palabra 'PUT'): */
     GPIO_setDirMode(MCU_GPIO0_BASE_ADDR, SERVO_BARRIER_PIN_NUM, GPIO_DIRECTION_OUTPUT);
     GPIO_pinWriteLow(MCU_GPIO0_BASE_ADDR, SERVO_BARRIER_PIN_NUM);
 

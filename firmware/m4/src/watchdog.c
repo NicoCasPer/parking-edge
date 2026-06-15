@@ -10,7 +10,7 @@
  * sincronización en un sistema RTOS multitarea introduce carreras que pueden
  * dejar la barrera en estado indeterminado.
  */
-
+#include "config.h"
 #include "watchdog.h"
 #include "sensor_driver.h"
 

@@ -9,6 +9,40 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#ifndef CSL_CORE_ID_MAX
+#define CSL_CORE_ID_MAX             (5U) 
+#endif
+
+/* --- CABECERAS Y PARCHE REQUERIDOS POR EL SDK V12 --- */
+#include <stdint.h>
+#include <stdbool.h>
+#include <kernel/dpl/AddrTranslateP.h>
+#include <kernel/dpl/ClockP.h>
+#include <drivers/hw_include/cslr.h>
+#include <drivers/ipc_notify.h>
+
+#ifndef CSL_GPIO_REGS_H_
+typedef struct {
+    struct {
+        uint32_t DIR;
+        uint32_t OUT_DATA;
+        uint32_t SET_DATA;
+        uint32_t CLR_DATA;
+        uint32_t IN_DATA;
+        uint32_t SET_RIS_TRIG;
+        uint32_t CLR_RIS_TRIG;
+        uint32_t SET_FAL_TRIG;
+        uint32_t CLR_FAL_TRIG;
+        uint32_t INTSTAT;
+    } BANK_REGISTERS[4];
+} CSL_GpioRegs;
+#endif
+
+#include <drivers/gpio/v0/gpio.h>
+
+/* Mapeo de la función de tiempo cambiada en el SDK v12 */
+#define ClockP_getTimeInMicrosecs ClockP_getTimeUsec
+
 /* =========================================================================
  * CONFIGURACIÓN DEL SENSOR ULTRASONIDO
  * ========================================================================= */
@@ -51,8 +85,9 @@
 /** Endpoint RPMsg del M4 */
 #define RPMSG_ENDPOINT          (14U)
 
-/** Core destino: Linux A53 */
-#define LINUX_CORE_ID           (IPC_NOTIFY_CLIENT_ID_LINUX_0)
+/* IDs nativos del SDK v12 para comunicación con Linux (A53) */
+#define LINUX_CORE_ID               (0U)  /* A53-0 */
+
 
 /** Tamaño del buffer de recepción RPMsg */
 #define RPMSG_RX_BUF_SIZE       (64U)
@@ -116,11 +151,9 @@
  * MACROS ÚTILES
  * ========================================================================= */
 
-/** Concatenación de versión */
-#define FW_VERSION_STR \
-    "v" \
-    #FW_VERSION_MAJOR "." \
-    #FW_VERSION_MINOR "." \
-    #FW_VERSION_PATCH
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+
+#define FW_VERSION_STR "v" STR(FW_VERSION_MAJOR) "." STR(FW_VERSION_MINOR) "." STR(FW_VERSION_PATCH)
 
 #endif /* CONFIG_H */

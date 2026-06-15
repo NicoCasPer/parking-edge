@@ -70,12 +70,13 @@ void rpmsg_notify_presence(void)
     }
 
     status = RPMessage_send(
-        &gRPMsgEndpoint,
-        LINUX_CORE_ID,
-        RPMSG_ENDPOINT,
-        (void *)msg,
-        (uint16_t)strlen(msg),
-        pdMS_TO_TICKS(RPMSG_SEND_TIMEOUT_MS));
+        (void *)msg,                            /* 1. Puntero al mensaje de texto (Buffer) */
+        (uint16_t)strlen(msg),                  /* 2. Longitud del mensaje */
+        LINUX_CORE_ID,                          /* 3. Core remoto (A53 - Linux) */
+        RPMSG_ENDPOINT,                         /* 4. Endpoint remoto en Linux */
+        RPMessage_getLocalEndPt(&gRPMsgEndpoint),              /* 5. Tu Endpoint local del M4 */
+        pdMS_TO_TICKS(RPMSG_SEND_TIMEOUT_MS)    /* 6. Timeout del sistema */
+);
 
     if (status == SystemP_SUCCESS)
         DebugP_log("[RPMsg] Enviado: %s\r\n", msg);
@@ -88,8 +89,8 @@ void vTaskRPMsgListener(void *pvParameters)
     /* CORRECCIÓN: rx_len inicial = sizeof-1 para dejar espacio al '\0' */
     char     rx_buf[RPMSG_RX_BUF_SIZE];
     uint16_t rx_len;
-    uint32_t remote_core;
-    uint16_t remote_ep;
+    uint16_t remote_core;
+    uint32_t remote_ep;
     int32_t  status;
 
     rpmsg_interface_init();

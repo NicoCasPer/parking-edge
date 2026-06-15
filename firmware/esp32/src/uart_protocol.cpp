@@ -1,7 +1,7 @@
 /*
  * uart_protocol.cpp — Listener UART y serialización de la salida hacia la Beagle.
  *
- * Equivale a rpmsg_interface.c del M4 (vTaskRPMsgListener), pero sobre UART2.
+ * Equivale a rpmsg_interface.c del M4 (vTaskRPMsgListener), pero sobre UART1.
  * El envío se centraliza en uart_send_line(), protegido por un mutex de TX para
  * que las distintas tareas (sensor, watchdog, este listener) no entrelacen líneas.
  */
@@ -18,12 +18,12 @@ static SemaphoreHandle_t xUartTxMutex = NULL;
 
 void uart_init(void)
 {
-    Serial2.begin(UART_BEAGLE_BAUD, SERIAL_8N1, UART_BEAGLE_RX_PIN, UART_BEAGLE_TX_PIN);
+    Serial1.begin(UART_BEAGLE_BAUD, SERIAL_8N1, UART_BEAGLE_RX_PIN, UART_BEAGLE_TX_PIN);
     if (xUartTxMutex == NULL)
     {
         xUartTxMutex = xSemaphoreCreateMutex();
     }
-    Serial.printf("[UART] UART2 listo. RX=GPIO%d TX=GPIO%d @ %d baud.\n",
+    Serial.printf("[UART] UART1 listo. RX=GPIO%d TX=GPIO%d @ %d baud.\n",
                   UART_BEAGLE_RX_PIN, UART_BEAGLE_TX_PIN, UART_BEAGLE_BAUD);
 }
 
@@ -34,8 +34,8 @@ void uart_send_line(const String &line)
         xSemaphoreTake(xUartTxMutex, portMAX_DELAY);
     }
 
-    Serial2.print(line);
-    Serial2.print('\n');
+    Serial1.print(line);
+    Serial1.print('\n');
 
     if (xUartTxMutex != NULL)
     {
@@ -73,9 +73,9 @@ void vTaskUartListener(void *pvParameters)
 
     for (;;)
     {
-        while (Serial2.available() > 0)
+        while (Serial1.available() > 0)
         {
-            char c = (char)Serial2.read();
+            char c = (char)Serial1.read();
 
             if (c == '\n' || c == '\r')
             {

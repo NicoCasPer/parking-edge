@@ -10,17 +10,17 @@
 #define CONFIG_H
 
 /* =========================================================================
- * PINES — ESP32 WROOM-32 (DevKit v1)
+ * PINES — ESP32 C6
  * ========================================================================= */
 
 /** HC-SR04 TRIGGER — salida digital */
-#define TRIGGER_PIN_NUM         (5)
+#define TRIGGER_PIN_NUM         (4)
 
 /** HC-SR04 ECHO — entrada. REQUIERE divisor de voltaje 5V->3.3V (ver README) */
-#define ECHO_PIN_NUM            (18)
+#define ECHO_PIN_NUM            (5)
 
 /** Barrera/servo — pin de señal PWM del servo. */
-#define SERVO_BARRIER_PIN_NUM   (19)
+#define SERVO_BARRIER_PIN_NUM   (6)
 
 /* =========================================================================
  * SERVO (PWM por LEDC) — movimiento fijo de 90°
@@ -48,9 +48,9 @@
 #define SERVO_LEDC_FREQ_HZ      (50)
 #define SERVO_LEDC_RES_BITS     (16)
 
-/** UART2 hacia la BeaglePlay (RX2/TX2). Cableado CRUZADO: TX2->RX_beagle */
-#define UART_BEAGLE_RX_PIN      (16)
-#define UART_BEAGLE_TX_PIN      (17)
+/** UART1 hacia la BeaglePlay. Cableado CRUZADO: TX->RX_beagle */
+#define UART_BEAGLE_RX_PIN      (3)
+#define UART_BEAGLE_TX_PIN      (2)
 #define UART_BEAGLE_BAUD        (115200)
 
 /* =========================================================================

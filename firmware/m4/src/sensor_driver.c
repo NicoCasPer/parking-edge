@@ -11,7 +11,7 @@
  *
  * Timing: ClockP_usecToTicks() + ClockP_sleep() del DPL (Driver Porting Layer).
  */
-
+#include "config.h"
 #include "sensor_driver.h"
 #include "rpmsg_interface.h"
 
@@ -59,7 +59,6 @@ uint32_t medir_distancia_cm(void)
 {
     uint32_t duration = 0U;
     uint32_t timeout_count;
-    uint32_t start_time;
 
     /* 1. Pulso de TRIGGER: 10 µs en HIGH */
     GPIO_pinWriteHigh(MCU_GPIO0_BASE_ADDR, TRIGGER_PIN_NUM);
@@ -79,7 +78,7 @@ uint32_t medir_distancia_cm(void)
     }
 
     /* 3. Guardar tiempo de inicio y medir duración del pulso ECHO en HIGH */
-    start_time = ClockP_getTimeInMicrosecs();  /* Usar timer real del sistema si disponible */
+    /* start_time removed — duration measured via timeout_count loop below */
     
     timeout_count = 0U;
     while (GPIO_pinRead(MCU_GPIO0_BASE_ADDR, ECHO_PIN_NUM) == GPIO_PIN_HIGH)

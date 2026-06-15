@@ -51,6 +51,14 @@ set(FIRMWARE_SOURCES
 
 add_executable(m4_firmware.elf ${FIRMWARE_SOURCES})
 
+# --- SOLUCIÓN A LOS 0 BYTES: FLAGS DEL ENLAZADOR (LINKER) ---
+# Se inyecta el script de memoria (.cmd) del SDK v12 y se evita el inicio genérico
+target_link_options(m4_firmware.elf PRIVATE
+    -nostartfiles
+    -Wl,-T,${SDK_PATH}/source/kernel/freertos/config/am62x/m4f/linker.cmd
+    -Wl,--gc-sections
+)
+
 target_link_libraries(m4_firmware.elf
     # Librerías del SDK de TI (ajustar según instalación)
     -L${SDK_PATH}/lib
