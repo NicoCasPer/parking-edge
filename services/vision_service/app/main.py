@@ -49,7 +49,11 @@ _MODEL_PATH = os.getenv(
 _LANE_ID = os.getenv("LANE_ID", "ENTRADA-1")
 
 # Duración máxima de una sesión de cámara en vivo (s) tras detectarse un vehículo.
-_STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "12"))
+_STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "20"))
+
+# Cada cuántos segundos re-correr YOLO (caro). Entre detecciones se reusa la caja
+# y se reintenta solo el OCR (barato) sobre frames frescos.
+_REDETECT_S = float(os.getenv("REDETECT_S", "8"))
 
 # Frames por segundo de la vista en vivo (latest.jpg). Independiente de YOLO.
 _LIVE_FPS = float(os.getenv("LIVE_FPS", "10"))
@@ -221,54 +225,44 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
             roi_bgr = cv2.resize(roi_bgr, (int(w * scale), int(h * scale)),
                                  interpolation=cv2.INTER_CUBIC)
 
-        gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
-        otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        variants = [
-            ("color", roi_bgr),   # ← la que mejor lee
-            ("gray",  gray),
-            ("otsu",  otsu),
-        ]
-
-        # Guardar SIEMPRE lo que ve el OCR para depurar.
+        # Guardar el recorte a color para depurar (lo que mejor lee el OCR).
         try:
             edir = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
             cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"), roi_bgr)
-            cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), otsu)
         except Exception:
             pass
 
         whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         plate_re  = re.compile(r"^[A-Z]{3}[0-9]{3}$")  # formato placa CO
 
+        # OCR RÁPIDO: solo el color (la que mejor lee) y 2 PSM, para que cada
+        # intento dure ~2-3s y se puedan hacer varios por sesión.
         best_text, best_conf, best_score = "", 0.0, -1.0
-        for _name, img in variants:
-            for psm in (7, 6, 11):  # 7=línea, 6=bloque, 11=texto disperso
-                data = pytesseract.image_to_data(
-                    img, config=f"--psm {psm}",
-                    output_type=pytesseract.Output.DICT,
-                )
-                texts, confs = [], []
-                for i in range(len(data["text"])):
-                    t = data["text"][i].strip()
-                    try:
-                        c = int(float(data["conf"][i]))
-                    except (ValueError, TypeError):
-                        c = -1
-                    if c > 0 and t:
-                        texts.append(t)
-                        confs.append(c)
-                raw  = "".join(texts).upper().replace(" ", "")
-                text = "".join(ch for ch in raw if ch in whitelist)  # filtro A-Z0-9
-                conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
-                if not text:
-                    continue
-                # Puntaje: prioriza formato de placa válido, luego longitud, luego conf.
-                score = conf + (10.0 if plate_re.match(text) else 0.0) + 0.1 * len(text)
-                if score > best_score:
-                    best_text, best_conf, best_score = text, conf, score
+        for psm in (7, 6):  # 7=línea, 6=bloque
+            data = pytesseract.image_to_data(
+                roi_bgr, config=f"--psm {psm}",
+                output_type=pytesseract.Output.DICT,
+            )
+            texts, confs = [], []
+            for i in range(len(data["text"])):
+                t = data["text"][i].strip()
+                try:
+                    c = int(float(data["conf"][i]))
+                except (ValueError, TypeError):
+                    c = -1
+                if c > 0 and t:
+                    texts.append(t)
+                    confs.append(c)
+            raw  = "".join(texts).upper().replace(" ", "")
+            text = "".join(ch for ch in raw if ch in whitelist)  # filtro A-Z0-9
+            conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
+            if not text:
+                continue
+            # Puntaje: prioriza formato de placa válido, luego longitud, luego conf.
+            score = conf + (10.0 if plate_re.match(text) else 0.0) + 0.1 * len(text)
+            if score > best_score:
+                best_text, best_conf, best_score = text, conf, score
 
-        if best_text:
-            logger.debug("OCR mejor candidato='%s' conf=%.2f", best_text, best_conf)
         return best_text, best_conf
 
     except Exception as exc:
@@ -361,6 +355,12 @@ def _run_camera_session(
         published = False
         yolo_runs = detections = ocr_attempts = 0   # contadores de diagnóstico
 
+        # Estrategia: YOLO es caro (~12s) así que se corre POCAS veces; una vez
+        # ubicada la placa, se reintenta el OCR (barato) sobre frames frescos en la
+        # MISMA caja, que da varias oportunidades de leerla bien sin re-detectar.
+        current_box = None
+        last_yolo   = 0.0
+
         while _running and time.monotonic() < deadline:
             frame = shared["frame"]
             if frame is None or model is None:
@@ -368,28 +368,36 @@ def _run_camera_session(
                 continue
 
             img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            t_det = time.monotonic()
-            boxes = model.detect(img_rgb)
-            yolo_runs += 1
-            if yolo_runs == 1:
-                logger.info("YOLO 1ª inferencia: %.2fs | cajas=%d",
-                            time.monotonic() - t_det, len(boxes))
-            if len(boxes) == 0:
-                time.sleep(0.02)
-                continue
-
-            detections += 1
-            x1, y1, x2, y2 = map(int, boxes[0])
             h, w = img_rgb.shape[:2]
+
+            # (Re)detectar con YOLO si no hay caja vigente o ya pasó _REDETECT_S.
+            if current_box is None or (time.monotonic() - last_yolo) > _REDETECT_S:
+                t_det = time.monotonic()
+                boxes = model.detect(img_rgb)
+                yolo_runs += 1
+                last_yolo = time.monotonic()
+                if yolo_runs == 1:
+                    logger.info("YOLO 1ª inferencia: %.2fs | cajas=%d",
+                                last_yolo - t_det, len(boxes))
+                if len(boxes) == 0:
+                    current_box = None
+                    time.sleep(0.02)
+                    continue
+                detections += 1
+                current_box = boxes[0]
+                x1, y1, x2, y2 = map(int, current_box)
+                logger.info("YOLO caja=(%d,%d,%d,%d)", x1, y1, x2, y2)
+
+            x1, y1, x2, y2 = map(int, current_box)
             roi = img_rgb[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
-            logger.info("YOLO detectó %d caja(s) | box=(%d,%d,%d,%d) roi=%dx%d",
-                        len(boxes), x1, y1, x2, y2, roi.shape[1], roi.shape[0])
             if roi.size == 0:
+                current_box = None
                 continue
 
             ocr_attempts += 1
             raw_text, confidence = _run_tesseract(roi)
-            logger.info("OCR | raw='%s' conf=%.2f", raw_text, confidence)
+            logger.info("OCR intento %d | raw='%s' conf=%.2f",
+                        ocr_attempts, raw_text, confidence)
             if confidence > best_conf:
                 best_conf, best_text, best_frame = confidence, raw_text, frame
 
