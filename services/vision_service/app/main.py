@@ -218,20 +218,17 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
             f = 200.0 / h
             gray = cv2.resize(gray, (int(w * f), 200), interpolation=cv2.INTER_CUBIC)
 
-        # Suavizado leve antes de binarizar (quita ruido de la cámara/pantalla).
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
-
-        # Varias binarizaciones: la iluminación despareja hace que una global (OTSU)
-        # falle, así que probamos también adaptativa e invertida. Tesseract quiere
-        # texto NEGRO sobre fondo BLANCO.
+        # CLAVE: Tesseract binariza internamente (Leptonica) mucho mejor que un
+        # OTSU/adaptativo manual para esta placa amarilla con luz despareja, así que
+        # la imagen en GRIS es la entrada principal. Se dejan OTSU/adaptativa solo
+        # como respaldo.
         otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
         adaptive = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11)
         variants = [
-            ("otsu",         otsu),
-            ("otsu_inv",     cv2.bitwise_not(otsu)),
-            ("adaptive",     adaptive),
-            ("adaptive_inv", cv2.bitwise_not(adaptive)),
+            ("gray",     gray),      # ← la que SÍ funciona (binariza Tesseract)
+            ("otsu",     otsu),
+            ("adaptive", adaptive),
         ]
 
         # Guardar SIEMPRE lo que ve el OCR para depurar.
@@ -239,15 +236,16 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
             edir = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
             cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"),
                         cv2.cvtColor(roi_image, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(edir, "ocr_gray.jpg"), gray)
             cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), otsu)
         except Exception:
             pass
 
         whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         best_text, best_conf = "", 0.0
-        # psm 7 = una línea (placa completa); 6 = bloque; 8 = palabra.
+        # psm 7 = una línea (placa completa); 6 = bloque.
         for _name, img in variants:
-            for psm in (7, 6, 8):
+            for psm in (7, 6):
                 data = pytesseract.image_to_data(
                     img,
                     config=f"--psm {psm} -c tessedit_char_whitelist={whitelist}",
