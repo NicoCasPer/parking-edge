@@ -27,7 +27,7 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/tmp/parking_captures /var/log/parking
+ReadWritePaths=/tmp/parking_captures /var/lib/parking /var/log/parking
 
 StandardOutput=journal
 StandardError=journal

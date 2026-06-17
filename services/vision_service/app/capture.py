@@ -31,6 +31,65 @@ EVIDENCE_MAX_FILES = int(os.getenv("EVIDENCE_MAX_FILES", "30"))
 EVIDENCE_LATEST    = "latest.jpg"
 
 
+# ── Captura en vivo (pseudo-streaming para el dashboard) ─────────────────────
+# El vision-service abre la cámara al detectarse un vehículo y, mientras dura la
+# sesión, reescribe latest.jpg en cada frame. El dashboard refresca esa imagen
+# rápido → vista "en vivo" sin que un segundo proceso abra /dev/video0 (la USB
+# tiene un único dueño).
+
+def open_camera() -> Optional["cv2.VideoCapture"]:
+    """Abre la cámara USB para una sesión de streaming. None si no está disponible."""
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        logger.error("No se puede acceder a la cámara /dev/video%d", CAMERA_INDEX)
+        cap.release()
+        return None
+    # Buffer mínimo: queremos el frame más reciente, no una cola con retardo.
+    try:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:
+        pass
+    time.sleep(0.3)  # permitir que el sensor regule la exposición
+    return cap
+
+
+def write_latest_frame(frame) -> None:
+    """Reescribe latest.jpg con el frame actual (vista en vivo del dashboard)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return
+    try:
+        os.makedirs(EVIDENCE_DIR, exist_ok=True)
+        dest = os.path.join(EVIDENCE_DIR, EVIDENCE_LATEST)
+        tmp  = dest + ".tmp"
+        if cv2.imwrite(tmp, frame):
+            os.replace(tmp, dest)   # swap atómico: el dashboard nunca lee a medias
+    except Exception as exc:
+        logger.debug("No se pudo escribir latest.jpg: %s", exc)
+
+
+def persist_evidence_frame(frame, trace_id: Optional[str] = None) -> Optional[str]:
+    """
+    Guarda un frame en memoria como evidencia permanente (galería del dashboard)
+    y refresca latest.jpg. Equivale a save_evidence() pero sin pasar por disco.
+    """
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    try:
+        os.makedirs(EVIDENCE_DIR, exist_ok=True)
+        ts   = int(time.time() * 1000)
+        tag  = (trace_id or "evt").split("-")[0]
+        dest = os.path.join(EVIDENCE_DIR, f"{ts}_{tag}.jpg")
+        if not cv2.imwrite(dest, frame):
+            return None
+        write_latest_frame(frame)
+        _prune_evidence()
+        logger.info("Evidencia guardada para el dashboard: %s", dest)
+        return dest
+    except Exception as exc:
+        logger.warning("No se pudo guardar evidencia: %s", exc)
+        return None
+
+
 def capture_burst(num_frames: int = 5) -> List[str]:
     """
     Captura una ráfaga rápida de frames desde una cámara USB.

@@ -279,14 +279,31 @@ function buildPaymentRow(p) {
   return tr;
 }
 
-// ── Cámara (evidencia capturada por el vision-service) ───────────────────────
+// ── Cámara: vista en vivo (latest.jpg) + galería de evidencia ────────────────
+// El vision-service reescribe latest.jpg en cada frame mientras hay un vehículo.
+// Refrescamos esa imagen rápido para dar sensación de vídeo en vivo, y dejamos
+// la galería (capturas con timestamp) como historial de lo detectado.
 
-let _cameraTimer = null;
+let _liveTimer    = null;
+let _galleryTimer = null;
+const LIVE_REFRESH_MS = 500;
 
 function startCameraPolling() {
+  refreshLive();
   loadCaptures();
-  if (_cameraTimer) clearInterval(_cameraTimer);
-  _cameraTimer = setInterval(loadCaptures, 3000);
+  if (_liveTimer)    clearInterval(_liveTimer);
+  if (_galleryTimer) clearInterval(_galleryTimer);
+  _liveTimer    = setInterval(refreshLive, LIVE_REFRESH_MS);
+  _galleryTimer = setInterval(loadCaptures, 3000);
+}
+
+function refreshLive() {
+  const img   = $("camera-latest");
+  const empty = $("camera-empty");
+  // onload/onerror controlan el estado vacío sin pegarle a otro endpoint.
+  img.onload  = () => { empty.classList.add("hidden");    img.classList.remove("hidden"); };
+  img.onerror = () => { img.classList.add("hidden"); empty.classList.remove("hidden"); };
+  img.src = `/api/captures/latest.jpg?t=${Date.now()}`;
 }
 
 function captureUrl(item) {
@@ -298,37 +315,17 @@ async function loadCaptures() {
     const res = await fetch("/api/captures?limit=12");
     if (!res.ok) return;
     const items = await res.json();
+    if (!Array.isArray(items)) return;
 
-    const img   = $("camera-latest");
-    const empty = $("camera-empty");
-    const gal   = $("camera-gallery");
-
-    if (!Array.isArray(items) || items.length === 0) {
-      img.classList.add("hidden");
-      empty.classList.remove("hidden");
-      gal.innerHTML = "";
-      $("capture-count").textContent = 0;
-      return;
-    }
-
-    empty.classList.add("hidden");
-    img.classList.remove("hidden");
-
-    // Última captura como vista principal (solo recargar si cambió).
-    const latestUrl = captureUrl(items[0]);
-    if (img.dataset.src !== latestUrl) {
-      img.src = latestUrl;
-      img.dataset.src = latestUrl;
-    }
-
-    // Galería de las capturas recientes; clic = verla en grande.
+    const gal = $("camera-gallery");
     gal.innerHTML = "";
+    // Historial: clic abre la captura en otra pestaña (no pisa la vista en vivo).
     items.forEach(it => {
       const thumb = document.createElement("img");
       thumb.className = "camera-thumb";
       thumb.src = captureUrl(it);
       thumb.title = new Date(it.mtime * 1000).toLocaleString("es-CO");
-      thumb.addEventListener("click", () => { img.src = thumb.src; });
+      thumb.addEventListener("click", () => window.open(captureUrl(it), "_blank"));
       gal.appendChild(thumb);
     });
 

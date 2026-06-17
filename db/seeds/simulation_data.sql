@@ -6,7 +6,7 @@ INSERT OR IGNORE INTO whitelist (plate, owner_name, valid_from, valid_until)
 VALUES
     ('ABC123', 'Juan Pérez',    date('now'),              date('now', '+1 year')),
     ('XYZ789', 'María García',  date('now'),              date('now', '+1 year')),
-    ('DEF456', 'Carlos López',  date('now'),              date('now', '+1 year')),
+    ('DEF012', 'Carlos López',  date('now'),              date('now', '+1 year')),
     ('GHI012', 'Ana Martínez',  date('now'),              date('now', '+1 year')),
     ('JKL345', 'Luis Torres',   date('now', '-30 days'),  date('now', '+6 months'));
 

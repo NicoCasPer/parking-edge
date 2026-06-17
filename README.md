@@ -1,45 +1,46 @@
 # parking-edge
 
-Sistema de control de acceso para parqueadero inteligente sobre **BeaglePlay (TI AM625)**.  
-Combina visión por computadora (YOLO11m INT8 + Tesseract), firmware de tiempo real en el núcleo M4F (FreeRTOS), y microservicios Python comunicados por MQTT.
+Sistema de control de acceso para parqueadero inteligente.
+**BeaglePlay (TI AM625)** actúa como gateway Linux (visión + lógica de negocio + dashboard) y un **ESP32 WROOM-32** maneja el tiempo real del hardware (sensor, barrera, watchdog), comunicados por **UART**.
+Combina visión por computadora (TensorFlow Lite — YOLO11m INT8 cuantizado + Tesseract OCR, cámara USB) y microservicios Python comunicados por **MQTT**.
 
 ---
 
 ## Arquitectura
 
 ```
-Sensor ultrasónico
+Sensor ultrasónico HC-SR04
       │
       ▼
-┌─────────────┐   RPMsg   ┌─────────────────────┐
-│  M4F / FreeRTOS │◄────────►│ hardware-controller  │
-│  (watchdog,     │         │ (Python / RPMsg↔MQTT)│
-│   sensor,       │         └────────┬────────────┘
-│   barrera GPIO) │                  │ MQTT
-└─────────────┘                  ▼
-                          ┌──────────────┐
-                          │ vision-service│  ◄── Cámara
-                          │ YOLO + OCR   │
-                          └──────┬───────┘
-                                 │ MQTT plate_read
-                                 ▼
-                       ┌──────────────────┐
-                       │access-orchestrator│
-                       │ whitelist/pago    │
-                       └────────┬──────────┘
-                                │ MQTT access_granted/denied
-                                ▼
-                       ┌──────────────────┐
-                       │hardware-controller│ → RPMsg → M4 → GPIO barrera
-                       └──────────────────┘
+┌──────────────────┐   UART    ┌─────────────────────┐
+│  ESP32 WROOM-32  │◄────────►│ hardware-controller  │
+│  (FreeRTOS:      │  115200   │ (Python / UART↔MQTT) │
+│   watchdog,      │           └────────┬────────────┘
+│   sensor HC-SR04,│                    │ MQTT
+│   barrera servo) │                    ▼
+└──────────────────┘            ┌──────────────┐
+                                │ vision-service│  ◄── Cámara USB
+                                │ TFLite + OCR │
+                                └──────┬───────┘
+                                       │ MQTT plate_read
+                                       ▼
+                             ┌──────────────────┐
+                             │access-orchestrator│
+                             │ whitelist/pago    │
+                             └────────┬──────────┘
+                                      │ MQTT access_granted/denied
+                                      ▼
+                             ┌──────────────────┐
+                             │hardware-controller│ → UART → ESP32 → barrera servo
+                             └──────────────────┘
 
     payment-integration  ─── HTTPS ──► Proveedor externo (+ circuit breaker)
     connectivity-service ─── telemetría del sistema
     web-dashboard        ─── Flask + WebSocket (panel de control)
 ```
 
-**Flujo completo de un acceso:**  
-`Vehículo llega → M4 detecta presencia → RPMsg → hardware-controller → MQTT → vision-service → YOLO+OCR → MQTT → access-orchestrator → whitelist/pago → MQTT → hardware-controller → RPMsg → M4 abre barrera`
+**Flujo completo de un acceso:**
+`Vehículo llega → ESP32 detecta presencia (HC-SR04) → UART → hardware-controller → MQTT → vision-service → YOLO+OCR (TFLite) → MQTT → access-orchestrator → whitelist/pago → MQTT → hardware-controller → UART → ESP32 abre barrera (servo)`
 
 ---
 
@@ -48,16 +49,17 @@ Sensor ultrasónico
 ```
 parking-edge/
 ├── firmware/
-│   ├── m4/src/          # FreeRTOS: main, rpmsg_interface, sensor_driver, watchdog
-│   └── pru/src/         # PRU: PWM barrera (stub) e IRQ GPIO (stub)
+│   ├── esp32/           # ACTIVO — PlatformIO: main, sensor HC-SR04, barrera servo PWM,
+│   │   └── src/         #          watchdog, uart_protocol (FreeRTOS sobre ESP32)
+│   └── m4/              # LEGADO histórico — FreeRTOS M4F/RPMsg, ya no se usa
 ├── services/
 │   ├── common/          # event_bus, event_models, database (compartidos)
-│   ├── hardware_controller/
-│   ├── vision_service/
+│   ├── hardware_controller/      # SerialClient (UART ↔ ESP32) ↔ MQTT
+│   ├── vision_service/           # TensorFlow Lite Interpreter + cámara USB
 │   ├── access_orchestrator/
-│   ├── payment_integration/   # circuit breaker + store-and-forward
+│   ├── payment_integration/      # circuit breaker + store-and-forward
 │   ├── connectivity_service/
-│   └── mock_payment_server/   # servidor de pagos local para pruebas
+│   └── mock_payment_server/      # servidor de pagos local para pruebas
 ├── web_dashboard/
 │   ├── backend/         # Flask + Socket.IO + RBAC
 │   ├── frontend/        # HTML/CSS/JS (eventos en tiempo real, whitelist, override)
@@ -69,11 +71,10 @@ parking-edge/
 │   ├── schema.sql
 │   ├── migrations/001_initial.sql
 │   └── seeds/simulation_data.sql
-├── systemd/             # 9 unit files listos para instalar
+├── systemd/             # unit files listos para instalar
 ├── scripts/
 │   ├── install.sh       # Instalación completa en BeaglePlay
-│   ├── healthcheck.sh   # Verifica todos los servicios
-│   └── load_m4_fw.sh    # Carga el firmware M4 vía remoteproc
+│   └── healthcheck.sh   # Verifica todos los servicios
 ├── Modelo/              # best_plate_yolo11m_int8.tflite (no en git, ver abajo)
 └── requirements.txt
 ```
@@ -83,17 +84,23 @@ parking-edge/
 ## Requisitos
 
 ### En el BeaglePlay (destino)
-- BeaglePlay con BeaglePlay Debian 12 o Ubuntu 22.04 LTS ARM
+- BeaglePlay con Debian 12 o Ubuntu 22.04 LTS ARM
 - Python 3.10+
 - Tesseract OCR: `sudo apt install tesseract-ocr`
 - Mosquitto: `sudo apt install mosquitto`
 - SQLite 3: `sudo apt install sqlite3`
-- Toolchain M4 (para compilar firmware): `sudo apt install gcc-arm-none-eabi`
-- TI MCU+ SDK instalado en `/opt/ti/mcu_plus_sdk` (ver [ti.com/tool/MCU-PLUS-SDK-AM62X](https://www.ti.com/tool/MCU-PLUS-SDK-AM62X))
+- UART habilitado hacia el ESP32 (por defecto `/dev/ttyS2` a 115200 baudios)
 
-### En la PC de desarrollo (para push al repo)
+### Hardware externo
+- **ESP32 WROOM-32** conectado por UART al BeaglePlay (TX/RX cruzados, GND común)
+- Sensor ultrasónico **HC-SR04** (ECHO con divisor de 5 V → 3.3 V)
+- Servo para la barrera (PWM)
+- Cámara **USB** (V4L2)
+
+### En la PC de desarrollo
 - Git
 - Acceso SSH al BeaglePlay
+- **PlatformIO** (para compilar y flashear el firmware del ESP32)
 
 ---
 
@@ -131,6 +138,8 @@ sudo nano /opt/parking-edge/config/app.env
 
 Ajustar al menos:
 ```env
+UART_DEVICE=/dev/ttyS2
+UART_BAUDRATE=115200
 PAYMENT_PROVIDER_URL=https://tu-proveedor.com
 PAYMENT_API_KEY=tu-api-key-real
 DASHBOARD_SECRET_KEY=una-clave-aleatoria-larga
@@ -139,13 +148,24 @@ DASHBOARD_ADMIN_PASSWORD=contraseña-segura
 
 > **Nunca versionar `app.env`** — está en `.gitignore`.
 
-### 5. Compilar y cargar el firmware M4
+### 5. Compilar y flashear el firmware del ESP32
+
+El firmware del ESP32 se construye con PlatformIO (ver detalles en [firmware/esp32/README.md](firmware/esp32/README.md)):
 
 ```bash
-cd /opt/parking-edge/firmware/m4
-make
-sudo bash /opt/parking-edge/scripts/load_m4_fw.sh
+cd /opt/parking-edge/firmware/esp32
+pio run --target upload     # compila y flashea por USB
 ```
+
+Pines (definidos en `firmware/esp32/include/config.h`):
+
+| Función              | Pin ESP32 |
+|----------------------|-----------|
+| HC-SR04 TRIGGER      | GPIO5     |
+| HC-SR04 ECHO         | GPIO18 (con divisor 5 V → 3.3 V) |
+| Barrera (servo PWM)  | GPIO19    |
+| UART2 TX → RX Beagle | GPIO17    |
+| UART2 RX ← TX Beagle | GPIO16    |
 
 ### 6. Iniciar todos los servicios
 
@@ -171,14 +191,14 @@ sudo bash /opt/parking-edge/scripts/healthcheck.sh
 
 ---
 
-## Desarrollo local (sin BeaglePlay)
+## Desarrollo local (sin hardware físico)
 
-Para probar sin hardware físico, activar el modo simulado:
+Para probar sin ESP32 ni cámara, activar el modo simulado:
 
 ```bash
-export RPMSG_SIMULATED=true
+export UART_SIMULATED=true
 export MOCK_PAYMENT_SERVER=true
-export CAMERA_INDEX=0        # cámara USB local / BeaglePlay
+export CAMERA_INDEX=0        # cámara USB local
 export DB_PATH=/tmp/parking.db
 ```
 
@@ -221,9 +241,18 @@ http://<ip-del-beagleplay>:8080
 
 **Funcionalidades del dashboard:**
 - Eventos de acceso en tiempo real (WebSocket)
+- **Vista en vivo de la cámara**: al detectarse un vehículo, el vision-service
+  abre una sesión de cámara y transmite los frames (`latest.jpg` refrescado), más
+  una galería con la evidencia de cada detección
 - Estadísticas del día (accesos / denegados / whitelist)
+- Tabla de pagos (placas que pagaron y su estado)
 - Override manual de barrera (OPEN / STOP / CLOSE)
 - Gestión de whitelist (agregar / actualizar placas)
+
+> La evidencia de cámara se guarda en `EVIDENCE_PATH` (por defecto
+> `/var/lib/parking/evidence`). **Debe estar fuera de `/tmp`**: los servicios usan
+> `PrivateTmp=yes` en systemd, así que un `/tmp` no es compartido entre el
+> vision-service y el dashboard.
 
 ---
 
@@ -266,7 +295,7 @@ Cola de pagos offline: `/var/lib/parking/payment_queue.db`
 
 ## Políticas configurables
 
-Editar `config/policies.yaml` (no requiere reiniciar los servicios en frío, se lee al arrancar):
+Editar `config/policies.yaml` (se lee al arrancar los servicios):
 
 ```yaml
 access:
@@ -274,7 +303,7 @@ access:
   fault_policy: deny        # FAIL-CLOSED: cualquier error → deniega acceso
 
 hardware:
-  m4_heartbeat_timeout_s: 5 # Watchdog M4: si Linux no responde en 5s, cierra barrera
+  esp32_heartbeat_timeout_s: 5 # Watchdog ESP32: si Linux no responde en 5s, cierra barrera
 
 circuit_breaker:
   fail_threshold: 5         # Fallos para abrir circuito de pagos
@@ -299,7 +328,24 @@ pytest services/ -v
 | C1  | Los dos proyectos no se integraban — ahora conectados por MQTT       |
 | C2  | Errores de OCR abrían la barrera — corregido con política FAIL-CLOSED|
 | C3  | Heartbeat bloqueado por visión — ahora en hilo dedicado              |
-| A1  | Buffer overflow en `rpmsg_interface.c` — corregido                   |
+| A1  | Buffer overflow en la interfaz de mensajería — corregido            |
 | A4  | GPIO sin mutex en watchdog — eliminado el fallback inseguro          |
 | A5  | `tmp_captures/` crecía sin límite — limpieza en `finally`            |
 | A6  | Confianza Tesseract en escala 0–100 vs 0.0–1.0 — normalizada         |
+
+---
+
+## Nota sobre la barrera (servo → LED)
+
+La interfaz de la barrera es siempre la misma a nivel de software: el orchestrator
+ordena `OPEN`/`CLOSE` y el `hardware-controller` lo envía por UART al ESP32
+(`barrier_open()` / `barrier_close()`). Para la maqueta de demostración, el actuador
+físico se simula con un **LED controlado por PWM** en vez de un servo: el LED hace
+una animación tipo "respiración" durante ~5 s al abrir, queda **encendido fijo**
+mientras está abierto, y vuelve a "respirar" ~5 s al cerrar hasta apagarse. El
+cierre automático tras 5 s sin vehículo se resuelve en el propio ESP32 con su
+sensor HC-SR04. El protocolo UART y el lado Python **no cambian**.
+
+## Nota sobre el firmware M4 (legado)
+
+El directorio `firmware/m4/` contiene la primera versión del firmware de tiempo real, que corría en el núcleo **M4F del AM625** y se comunicaba con Linux vía **RPMsg**. Se migró a un **ESP32 WROOM-32 por UART** (commit `cff7e0e`) por simplicidad de cableado, depuración y flasheo. El código M4 se conserva solo como referencia histórica y **no forma parte del flujo actual**.

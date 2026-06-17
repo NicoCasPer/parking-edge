@@ -4,9 +4,12 @@ main.py — Punto de entrada del vision-service (Migrado a TensorFlow Lite Nativ
 Integra la captura de cámara (Juanito_part) con el bus MQTT (integrante_B):
   1. Se suscribe a parking/events/presence_detected.
   2. Por cada evento, lanza un worker thread para no bloquear el loop principal.
-  3. El worker: captura ráfaga → selecciona mejor frame → YOLO ROI TFLite → Tesseract →
-     normaliza confianza → OCRPipeline.process() → publica plate_read/unreadable.
-  4. Limpia los frames temporales después del procesamiento.
+  3. El worker abre una SESIÓN de cámara en vivo (una sola a la vez): abre la USB,
+     y durante STREAM_MAX_SECONDS reescribe latest.jpg en cada frame (vista en vivo
+     del dashboard) mientras corre YOLO ROI TFLite → Tesseract. En cuanto detecta
+     una placa CLARA (formato válido + confianza sobre el umbral) publica plate_read
+     y termina; el access-orchestrator decide whitelist/pago y abre la barrera.
+  4. Si la ventana expira sin placa clara, publica el mejor intento / plate_unreadable.
 """
 
 import logging
@@ -23,9 +26,12 @@ import tensorflow as tf
 
 from services.common.event_bus import EventBus
 from services.common.event_models import Topics
-from services.vision_service.app.capture import capture_burst, cleanup_frames, save_evidence
-from services.vision_service.app.frame_selector import select_best_frame
-from services.vision_service.app.quality import laplacian_variance, MIN_SHARPNESS_THRESHOLD
+from services.vision_service.app.capture import (
+    open_camera,
+    write_latest_frame,
+    persist_evidence_frame,
+)
+from services.vision_service.app.quality import MIN_SHARPNESS_THRESHOLD
 from services.vision_service.app.ocr_pipeline import OCRPipeline
 
 logging.basicConfig(
@@ -40,6 +46,12 @@ _MODEL_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "../../../../Modelo/best_plate_yolo11m_int8.tflite"),
 )
 _LANE_ID = os.getenv("LANE_ID", "ENTRADA-1")
+
+# Duración máxima de una sesión de cámara en vivo (s) tras detectarse un vehículo.
+_STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "8"))
+
+# Solo una sesión de cámara a la vez: la USB tiene un único dueño.
+_session_lock = threading.Lock()
 
 # Control de señal de cierre
 _running = True
@@ -203,104 +215,114 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Worker de procesamiento por evento de presencia
+# Calidad de frame (nitidez) sobre un frame en memoria
 # ---------------------------------------------------------------------------
 
-def _process_presence_event(
+def _frame_quality(frame: np.ndarray) -> float:
+    """Nitidez Laplaciana normalizada (0–1) de un frame BGR en memoria."""
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        return min(sharpness / (MIN_SHARPNESS_THRESHOLD * 10), 1.0)
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Sesión de cámara en vivo por evento de presencia
+# ---------------------------------------------------------------------------
+
+def _run_camera_session(
     pipeline:  OCRPipeline,
     trace_id:  Optional[str],
     lane_id:   str,
 ) -> None:
     """
-    Ejecuta el pipeline completo en un thread worker.
+    Sesión de cámara en vivo disparada por presence_detected.
+
+    Abre la cámara una sola vez y, durante _STREAM_MAX_SECONDS:
+      - reescribe latest.jpg en cada frame (vista en vivo del dashboard),
+      - corre YOLO y, en cuanto detecta una placa CLARA (formato válido y
+        confianza sobre el umbral), publica plate_read y termina → el
+        access-orchestrator decide whitelist/pago y abre la barrera.
+    Si la ventana expira sin placa clara, publica el mejor intento (o
+    plate_unreadable) para dejar traza del evento.
     """
-    frames = capture_burst(num_frames=5)
-    if not frames:
-        logger.warning("No se capturaron frames. Evento ignorado.")
+    if not _session_lock.acquire(blocking=False):
+        logger.info("Sesión de cámara ya activa; se ignora presence_detected | trace_id=%s",
+                    trace_id)
         return
 
+    cap = None
     try:
-        # 1. Seleccionar mejor frame
-        best_frame = select_best_frame(frames)
-
-        # Preservar evidencia para el dashboard (lo que vio la cámara), aunque
-        # la placa resulte ilegible. Usa el mejor frame o, si no hay, el primero.
-        save_evidence(best_frame or frames[0], trace_id)
-
-        if best_frame is None:
-            logger.warning("Todos los frames son de baja calidad. plate_unreadable.")
-            pipeline.process(
-                text="",
-                confidence=0.0,
-                evidence_id="",
-                frame_quality=0.0,
-                lane_id=lane_id,
-                trace_id=trace_id,
-            )
+        cap = open_camera()
+        if cap is None:
+            logger.warning("Cámara no disponible. plate_unreadable.")
+            pipeline.process("", 0.0, "", 0.0, lane_id=lane_id, trace_id=trace_id)
             return
 
-        sharpness_score = laplacian_variance(best_frame)
-        frame_quality = min(sharpness_score / (MIN_SHARPNESS_THRESHOLD * 10), 1.0)
-
-        # 2. Cargar imagen
-        img = cv2.imread(best_frame)
-        if img is None:
-            logger.error("No se pudo leer imagen: %s", best_frame)
-            pipeline.process("", 0.0, best_frame, 0.0, lane_id=lane_id, trace_id=trace_id)
-            return
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # 3. Detección de placa con YOLO TFLite
         model = _get_yolo_model()
-        if model is None:
-            logger.warning("Modelo YOLO no disponible. plate_unreadable.")
-            pipeline.process("", 0.0, best_frame, frame_quality,
-                             lane_id=lane_id, trace_id=trace_id)
-            return
+        deadline = time.monotonic() + _STREAM_MAX_SECONDS
 
-        # LLAMADA AL NUEVO DETECTOR NATIVO
-        boxes = model.detect(img_rgb)
+        best_conf, best_text, best_frame = -1.0, "", None
+        last_frame = None
+        published  = False
 
-        if len(boxes) == 0:
-            logger.info("YOLO no detectó placa en el frame.")
-            pipeline.process("", 0.0, best_frame, frame_quality,
-                             lane_id=lane_id, trace_id=trace_id)
-            return
+        while _running and time.monotonic() < deadline:
+            ok, frame = cap.read()
+            if not ok or frame is None or frame.size == 0:
+                time.sleep(0.02)
+                continue
 
-        # Extracción limpia de coordenadas
-        x1, y1, x2, y2 = map(int, boxes[0])
-        h, w = img_rgb.shape[:2]
-        roi = img_rgb[
-            max(0, y1):min(h, y2),
-            max(0, x1):min(w, x2),
-        ]
+            last_frame = frame
+            write_latest_frame(frame)   # vista en vivo del dashboard
 
-        if roi.size == 0:
-            logger.warning("ROI vacía después de recorte.")
-            pipeline.process("", 0.0, best_frame, frame_quality,
-                             lane_id=lane_id, trace_id=trace_id)
-            return
+            if model is None:
+                continue
 
-        # 4. OCR con confianza normalizada
-        raw_text, confidence = _run_tesseract(roi)
+            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            boxes = model.detect(img_rgb)
+            if len(boxes) == 0:
+                continue
 
-        logger.info(
-            "OCR completado | text='%s' confidence=%.2f frame_quality=%.2f",
-            raw_text, confidence, frame_quality,
-        )
+            x1, y1, x2, y2 = map(int, boxes[0])
+            h, w = img_rgb.shape[:2]
+            roi = img_rgb[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
+            if roi.size == 0:
+                continue
 
-        # 5. Publicar evento MQTT
-        pipeline.process(
-            text=raw_text,
-            confidence=confidence,
-            evidence_id=best_frame,
-            frame_quality=frame_quality,
-            lane_id=lane_id,
-            trace_id=trace_id,
-        )
+            raw_text, confidence = _run_tesseract(roi)
+            if confidence > best_conf:
+                best_conf, best_text, best_frame = confidence, raw_text, frame
+
+            # ¿Placa clara? (formato válido + confianza sobre el umbral) → abrir ya.
+            if pipeline.validator.validate(raw_text, confidence).is_valid:
+                evidence = persist_evidence_frame(frame, trace_id) or ""
+                logger.info("Placa clara en vivo | text='%s' confidence=%.2f",
+                            raw_text, confidence)
+                pipeline.process(raw_text, confidence, evidence, _frame_quality(frame),
+                                 lane_id=lane_id, trace_id=trace_id)
+                published = True
+                break
+
+        # Ventana terminada sin placa clara: dejar traza del mejor intento.
+        if not published:
+            if best_frame is not None:
+                evidence = persist_evidence_frame(best_frame, trace_id) or ""
+                pipeline.process(best_text, max(best_conf, 0.0), evidence,
+                                 _frame_quality(best_frame),
+                                 lane_id=lane_id, trace_id=trace_id)
+            elif last_frame is not None:
+                evidence = persist_evidence_frame(last_frame, trace_id) or ""
+                pipeline.process("", 0.0, evidence, 0.0, lane_id=lane_id, trace_id=trace_id)
+            else:
+                logger.warning("No se capturó ningún frame en la sesión. plate_unreadable.")
+                pipeline.process("", 0.0, "", 0.0, lane_id=lane_id, trace_id=trace_id)
 
     finally:
-        cleanup_frames(frames)
+        if cap is not None:
+            cap.release()
+        _session_lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -313,10 +335,10 @@ def _make_presence_handler(pipeline: OCRPipeline, lane_id: str):
         logger.info("presence_detected recibido | trace_id=%s", trace_id)
 
         t = threading.Thread(
-            target=_process_presence_event,
+            target=_run_camera_session,
             args=(pipeline, trace_id, lane_id),
             daemon=True,
-            name=f"vision-worker-{trace_id}",
+            name=f"vision-session-{trace_id}",
         )
         t.start()
 
