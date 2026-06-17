@@ -218,41 +218,54 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
             f = 200.0 / h
             gray = cv2.resize(gray, (int(w * f), 200), interpolation=cv2.INTER_CUBIC)
 
-        binarized = cv2.threshold(gray, 0, 255,
-                                  cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        # Suavizado leve antes de binarizar (quita ruido de la cámara/pantalla).
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-        # Guardar SIEMPRE lo que ve el OCR para depurar: el recorte a color y la
-        # imagen binarizada que entra a Tesseract.
+        # Varias binarizaciones: la iluminación despareja hace que una global (OTSU)
+        # falle, así que probamos también adaptativa e invertida. Tesseract quiere
+        # texto NEGRO sobre fondo BLANCO.
+        otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        adaptive = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11)
+        variants = [
+            ("otsu",         otsu),
+            ("otsu_inv",     cv2.bitwise_not(otsu)),
+            ("adaptive",     adaptive),
+            ("adaptive_inv", cv2.bitwise_not(adaptive)),
+        ]
+
+        # Guardar SIEMPRE lo que ve el OCR para depurar.
         try:
             edir = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
             cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"),
                         cv2.cvtColor(roi_image, cv2.COLOR_RGB2BGR))
-            cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), binarized)
+            cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), otsu)
         except Exception:
             pass
 
         whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        # psm 7 = una línea de texto (placa completa); 6 = bloque; 8 = palabra.
         best_text, best_conf = "", 0.0
-        for psm in (7, 6, 8):
-            data = pytesseract.image_to_data(
-                binarized,
-                config=f"--psm {psm} -c tessedit_char_whitelist={whitelist}",
-                output_type=pytesseract.Output.DICT,
-            )
-            texts, confs = [], []
-            for i in range(len(data["text"])):
-                t = data["text"][i].strip()
-                c = int(data["conf"][i])
-                if c > 0 and t:
-                    texts.append(t)
-                    confs.append(c)
-            text = "".join(texts).upper().replace(" ", "")
-            conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
-            # Preferir lecturas más completas (placa colombiana = 6 chars).
-            if text and (len(text) > len(best_text) or
-                         (len(text) == len(best_text) and conf > best_conf)):
-                best_text, best_conf = text, conf
+        # psm 7 = una línea (placa completa); 6 = bloque; 8 = palabra.
+        for _name, img in variants:
+            for psm in (7, 6, 8):
+                data = pytesseract.image_to_data(
+                    img,
+                    config=f"--psm {psm} -c tessedit_char_whitelist={whitelist}",
+                    output_type=pytesseract.Output.DICT,
+                )
+                texts, confs = [], []
+                for i in range(len(data["text"])):
+                    t = data["text"][i].strip()
+                    c = int(data["conf"][i])
+                    if c > 0 and t:
+                        texts.append(t)
+                        confs.append(c)
+                text = "".join(texts).upper().replace(" ", "")
+                conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
+                # Preferir lecturas más completas (placa colombiana = 6 chars).
+                if text and (len(text) > len(best_text) or
+                             (len(text) == len(best_text) and conf > best_conf)):
+                    best_text, best_conf = text, conf
 
         return best_text, best_conf
 
