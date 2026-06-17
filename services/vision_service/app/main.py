@@ -58,6 +58,9 @@ def _handle_shutdown(signum, frame) -> None:
 class YOLO11TFLiteDetector:
     """Clase empaquetadora para realizar inferencia YOLO INT8 usando tf.lite."""
     def __init__(self, model_path: str):
+        # AÑADIDO: Cerrojo para evitar cruce de hilos en TFLite
+        self.lock = threading.Lock()
+        
         self.interpreter = tf.lite.Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
         
@@ -86,12 +89,15 @@ class YOLO11TFLiteDetector:
         else:
             input_data = input_data.astype(np.float32) / 255.0
             
-        # 2. Inferencia ejecutada directamente en la CPU mediante XNNPACK
-        self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
-        self.interpreter.invoke()
-        
-        # 3. Postprocesar: Extraer salidas brutas y aplicar de-cuantización si aplica
-        output_tensor = self.interpreter.get_tensor(self.output_details[0]['index'])
+        # AÑADIDO: Bloqueo exclusivo para la inferencia de TensorFlow Lite
+        with self.lock:
+            # 2. Inferencia ejecutada directamente en la CPU mediante XNNPACK
+            self.interpreter.set_tensor(self.input_details[0]['index'], input_data)
+            self.interpreter.invoke()
+            
+            # 3. Postprocesar: Extraer salidas brutas y aplicar de-cuantización si aplica
+            output_tensor = self.interpreter.get_tensor(self.output_details[0]['index'])
+            
         if self.output_details[0]['dtype'] == np.int8 or self.output_details[0]['dtype'] == np.uint8:
             scale, zero_point = self.output_details[0]['quantization']
             output_tensor = (output_tensor.astype(np.float32) - zero_point) * scale
