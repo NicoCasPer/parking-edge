@@ -337,7 +337,16 @@ def main() -> None:
     _setup_mqtt()
     port = int(os.getenv("DASHBOARD_PORT", "8080"))
     logger.info("Dashboard iniciando en puerto %d...", port)
-    socketio.run(app, host="0.0.0.0", port=port, use_reloader=False)
+    # allow_unsafe_werkzeug: en async_mode="threading" Flask-SocketIO usa el
+    # servidor de desarrollo de Werkzeug, que en versiones nuevas se bloquea por
+    # defecto. Es aceptable para este despliegue en el borde (red local, no Internet).
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        use_reloader=False,
+        allow_unsafe_werkzeug=True,
+    )
 
 
 if __name__ == "__main__":
