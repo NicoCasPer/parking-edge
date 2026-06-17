@@ -37,13 +37,58 @@ EVIDENCE_LATEST    = "latest.jpg"
 # rápido → vista "en vivo" sin que un segundo proceso abra /dev/video0 (la USB
 # tiene un único dueño).
 
-def open_camera() -> Optional["cv2.VideoCapture"]:
-    """Abre la cámara USB para una sesión de streaming. None si no está disponible."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+# Cuántos nodos /dev/videoN escanear si CAMERA_INDEX no abre (la USB puede caer
+# en video0/1/2... y el número cambia al reconectar).
+_CAMERA_SCAN_MAX = int(os.getenv("CAMERA_SCAN_MAX", "5"))
+
+
+def _try_open(index: int) -> Optional["cv2.VideoCapture"]:
+    """
+    Intenta abrir /dev/video<index> y verifica que entregue un frame real.
+    Devuelve el VideoCapture listo, o None. La verificación de frame descarta
+    nodos que abren pero no capturan (p.ej. el nodo de metadata de una UVC).
+    """
+    cap = cv2.VideoCapture(index)
     if not cap.isOpened():
-        logger.error("No se puede acceder a la cámara /dev/video%d", CAMERA_INDEX)
         cap.release()
         return None
+    ok, frame = cap.read()
+    if not ok or frame is None or frame.size == 0:
+        cap.release()
+        return None
+    return cap
+
+
+def open_camera() -> Optional["cv2.VideoCapture"]:
+    """
+    Abre la cámara USB para una sesión de streaming, con autodetección de índice.
+
+    Prueba CAMERA_INDEX primero; si no abre o no entrega frames, escanea el resto
+    de nodos /dev/video0.._CAMERA_SCAN_MAX. Devuelve None si ninguno funciona.
+    """
+    candidates = [CAMERA_INDEX] + [i for i in range(_CAMERA_SCAN_MAX) if i != CAMERA_INDEX]
+
+    cap = None
+    used = None
+    for idx in candidates:
+        cap = _try_open(idx)
+        if cap is not None:
+            used = idx
+            break
+
+    if cap is None:
+        logger.error("No se pudo abrir ninguna cámara (probé índices %s)", candidates)
+        return None
+
+    if used != CAMERA_INDEX:
+        logger.warning(
+            "Cámara abierta en /dev/video%d (CAMERA_INDEX=%d no funcionó). "
+            "Fija CAMERA_INDEX=%d en app.env para evitar el escaneo.",
+            used, CAMERA_INDEX, used,
+        )
+    else:
+        logger.info("Cámara abierta en /dev/video%d", used)
+
     # Buffer mínimo: queremos el frame más reciente, no una cola con retardo.
     try:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
