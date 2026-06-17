@@ -31,6 +31,7 @@ UART_DEVICE="${UART_DEVICE:-/dev/ttyS2}"
 DB_PATH="${DB_PATH:-/var/lib/parking/parking.db}"
 WITH_PAYMENTS="${WITH_PAYMENTS:-1}"        # 1 = payment-integration + mock server
 WITH_CONNECTIVITY="${WITH_CONNECTIVITY:-0}"
+WITH_DASHBOARD="${WITH_DASHBOARD:-1}"      # 0 = no arrancar el dashboard (lo corres aparte)
 LOG_DIR="${LOG_DIR:-/tmp/parking_logs}"
 mkdir -p "$LOG_DIR"
 
@@ -100,7 +101,11 @@ if [[ "$WITH_CONNECTIVITY" == "1" ]]; then
   start connectivity-service python -m services.connectivity_service.app.main
 fi
 
-start web-dashboard python -m web_dashboard.backend.app
+if [[ "$WITH_DASHBOARD" == "1" ]]; then
+  start web-dashboard python -m web_dashboard.backend.app
+else
+  echo "[run_demo] (dashboard OMITIDO: WITH_DASHBOARD=0 — córrelo aparte)"
+fi
 
 echo
 echo "[run_demo] Todo arriba ($(date +%H:%M:%S))."
