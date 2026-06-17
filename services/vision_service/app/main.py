@@ -210,29 +210,50 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
         import pytesseract
 
         gray = cv2.cvtColor(roi_image, cv2.COLOR_RGB2GRAY)
+
+        # Tesseract rinde mucho mejor con caracteres altos: escalar el ROI hasta
+        # ~200 px de alto si viene pequeño.
+        h, w = gray.shape[:2]
+        if 0 < h < 200:
+            f = 200.0 / h
+            gray = cv2.resize(gray, (int(w * f), 200), interpolation=cv2.INTER_CUBIC)
+
         binarized = cv2.threshold(gray, 0, 255,
                                   cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
-        data = pytesseract.image_to_data(
-            binarized,
-            config=r"--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-            output_type=pytesseract.Output.DICT,
-        )
-        texts = [
-            data["text"][i]
-            for i in range(len(data["text"]))
-            if int(data["conf"][i]) > 0 and data["text"][i].strip()
-        ]
-        confs = [
-            int(data["conf"][i])
-            for i in range(len(data["text"]))
-            if int(data["conf"][i]) > 0 and data["text"][i].strip()
-        ]
+        # Guardar lo que ve Tesseract para depurar (OCR_DEBUG=1).
+        if os.getenv("OCR_DEBUG", "0") == "1":
+            try:
+                dbg = os.path.join(os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence"),
+                                   "ocr_debug.jpg")
+                cv2.imwrite(dbg, binarized)
+            except Exception:
+                pass
 
-        raw_text = "".join(texts).strip().upper().replace(" ", "")
-        confidence_0_1 = (sum(confs) / len(confs) / 100.0) if confs else 0.0
+        whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        # psm 7 = una línea de texto (placa completa); 6 = bloque; 8 = palabra.
+        best_text, best_conf = "", 0.0
+        for psm in (7, 6, 8):
+            data = pytesseract.image_to_data(
+                binarized,
+                config=f"--oem 1 --psm {psm} -c tessedit_char_whitelist={whitelist}",
+                output_type=pytesseract.Output.DICT,
+            )
+            texts, confs = [], []
+            for i in range(len(data["text"])):
+                t = data["text"][i].strip()
+                c = int(data["conf"][i])
+                if c > 0 and t:
+                    texts.append(t)
+                    confs.append(c)
+            text = "".join(texts).upper().replace(" ", "")
+            conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
+            # Preferir lecturas más completas (placa colombiana = 6 chars).
+            if text and (len(text) > len(best_text) or
+                         (len(text) == len(best_text) and conf > best_conf)):
+                best_text, best_conf = text, conf
 
-        return raw_text, confidence_0_1
+        return best_text, best_conf
 
     except Exception as exc:
         logger.error("Error en Tesseract: %s", exc)
