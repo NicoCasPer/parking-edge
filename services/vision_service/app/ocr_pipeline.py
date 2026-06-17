@@ -160,6 +160,17 @@ class OCRPipeline:
         )
 
     def _load_confidence_threshold(self, policies_path: str) -> float:
+        # Override por entorno (gana a policies.yaml). Útil porque el OCR sobre
+        # placa en pantalla da confianzas bajas (0.2–0.5); con papel sube.
+        env = os.getenv("OCR_CONFIDENCE_MIN")
+        if env:
+            try:
+                val = float(env)
+                logger.info("confidence_min por OCR_CONFIDENCE_MIN=%.2f", val)
+                return val
+            except ValueError:
+                logger.warning("OCR_CONFIDENCE_MIN inválido: %r", env)
+
         fallback = 0.85
         try:
             with open(policies_path, "r", encoding="utf-8") as f:
