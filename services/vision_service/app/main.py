@@ -43,7 +43,7 @@ logger = logging.getLogger("vision-service")
 
 _MODEL_PATH = os.getenv(
     "MODEL_PATH",
-    os.path.join(os.path.dirname(__file__), "../../../../Modelo/best_plate_yolo11m_int8.tflite"),
+    os.path.join(os.path.dirname(__file__), "../../../Modelo/best_plate_yolo11m_int8.tflite"),
 )
 _LANE_ID = os.getenv("LANE_ID", "ENTRADA-1")
 
@@ -393,7 +393,7 @@ def main() -> None:
 
     policies_path = os.getenv(
         "POLICIES_PATH",
-        os.path.join(os.path.dirname(__file__), "../../../../config/policies.yaml"),
+        os.path.join(os.path.dirname(__file__), "../../../config/policies.yaml"),
     )
     pipeline = OCRPipeline(event_bus=bus, policies_path=policies_path, lane_id=lane_id)
 

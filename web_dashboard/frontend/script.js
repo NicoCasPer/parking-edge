@@ -76,6 +76,13 @@ $("logout-btn").addEventListener("click", async () => {
 // ── Socket.IO ──────────────────────────────────────────────────────────────
 
 function connectSocket() {
+  // socket.io se carga de un CDN; si no hay internet, no rompemos el resto del
+  // dashboard (cámara y eventos siguen funcionando por polling REST).
+  if (typeof io === "undefined") {
+    $("mqtt-status").className = "status-dot offline";
+    $("mqtt-status").title = "socket.io no disponible (sin tiempo real)";
+    return;
+  }
   _socket = io({ path: "/ws" });
 
   _socket.on("connect", () => {

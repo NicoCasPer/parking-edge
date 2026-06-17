@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_POLICIES_PATH = os.getenv(
     "POLICIES_PATH",
-    os.path.join(os.path.dirname(__file__), "../../../../config/policies.yaml"),
+    os.path.join(os.path.dirname(__file__), "../../../config/policies.yaml"),
 )
 
 
