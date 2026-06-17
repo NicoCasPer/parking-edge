@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 # Constantes
 # ---------------------------------------------------------------------------
 
-# Formato colombiano: tres letras mayúsculas, guion, tres dígitos
-_PLATE_REGEX = re.compile(r'^[A-Z]{3}-\d{3}$')
+# Formato colombiano SIN guion: tres letras mayúsculas + tres dígitos (ABC123).
+# Se usa sin guion para coincidir con cómo se guardan las placas en la BD/whitelist.
+_PLATE_REGEX = re.compile(r'^[A-Z]{3}\d{3}$')
 
 # Umbral de confianza por defecto (escala 0.0–1.0, alineado con policies.yaml)
 DEFAULT_CONFIDENCE_THRESHOLD = 0.60
@@ -214,26 +215,15 @@ class PlateValidator:
             Texto normalizado en formato "XXX-NNN" si es posible,
             o el texto limpio tal cual si no tiene la estructura esperada.
         """
-        # Paso 1: limpiar y mayúsculas
-        cleaned = text.strip().upper()
+        # Paso 1: limpiar, mayúsculas y descartar todo lo que no sea A-Z0-9
+        # (espacios, guiones, puntos, ruido OCR). El formato objetivo es SIN guion.
+        cleaned = re.sub(r"[^A-Z0-9]", "", text.strip().upper())
 
-        # Paso 2: normalizar el separador
-        # Tesseract a veces devuelve "ABC 123", "ABC_123" o "ABC.123"
-        for sep in (" ", "_", ".", ",", ";"):
-            cleaned = cleaned.replace(sep, "-")
-
-        # Paso 3: descartar caracteres no esperados (ruido OCR)
-        cleaned = re.sub(r"[^A-Z0-9\-]", "", cleaned)
-
-        # Paso 4: corrección posicional de errores de OCR
-        # Solo aplicamos si la longitud es 7 (ABC-123) para no corromper casos atípicos
-        if len(cleaned) == 7 and cleaned[3] == "-":
-            letter_part = cleaned[:3]
-            digit_part  = cleaned[4:]
-
-            letter_part = "".join(_LETTER_FIXES.get(c, c) for c in letter_part)
-            digit_part  = "".join(_DIGIT_FIXES.get(c, c)  for c in digit_part)
-
-            cleaned = f"{letter_part}-{digit_part}"
+        # Paso 2: corrección posicional de errores de OCR sobre el formato ABC123
+        # (3 letras + 3 dígitos). Solo si la longitud es 6 para no corromper otros casos.
+        if len(cleaned) == 6:
+            letter_part = "".join(_LETTER_FIXES.get(c, c) for c in cleaned[:3])
+            digit_part  = "".join(_DIGIT_FIXES.get(c, c)  for c in cleaned[3:])
+            cleaned = letter_part + digit_part
 
         return cleaned
