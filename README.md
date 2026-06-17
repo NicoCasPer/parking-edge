@@ -74,6 +74,7 @@ parking-edge/
 ├── systemd/             # unit files listos para instalar
 ├── scripts/
 │   ├── install.sh       # Instalación completa en BeaglePlay
+│   ├── run_demo.sh      # Levanta todo en un solo terminal (sin systemd)
 │   └── healthcheck.sh   # Verifica todos los servicios
 ├── Modelo/              # best_plate_yolo11m_int8.tflite (no en git, ver abajo)
 └── requirements.txt
@@ -191,6 +192,35 @@ sudo bash /opt/parking-edge/scripts/healthcheck.sh
 
 ---
 
+## Arranque rápido para demo (un solo terminal)
+
+Para levantar **todo el sistema sin systemd** (broker + base de datos + servicios +
+dashboard) en una sola terminal, usar el script de demo:
+
+```bash
+cd /opt/parking-edge
+bash scripts/run_demo.sh
+```
+
+`Ctrl+C` detiene todo. El script:
+- carga `config/app.env`,
+- arranca `mosquitto` si no está corriendo,
+- crea/migra/seedea la base de datos si no existe (toma permisos con `sudo` si hace falta),
+- lanza los servicios en orden y escribe sus logs en `/tmp/parking_logs/<servicio>.log`.
+
+Variables útiles:
+
+```bash
+UART_DEVICE=/dev/ttyS0     bash scripts/run_demo.sh   # puerto UART hacia el ESP32
+OCR_CONFIDENCE_MIN=0.20    bash scripts/run_demo.sh   # umbral OCR bajo (placa en pantalla)
+WITH_PAYMENTS=0            bash scripts/run_demo.sh   # sin pagos
+WITH_DASHBOARD=0           bash scripts/run_demo.sh   # sin dashboard (lo corres aparte)
+```
+
+> Ver logs en vivo en otra terminal: `tail -F /tmp/parking_logs/*.log`
+
+---
+
 ## Desarrollo local (sin hardware físico)
 
 Para probar sin ESP32 ni cámara, activar el modo simulado:
@@ -198,7 +228,7 @@ Para probar sin ESP32 ni cámara, activar el modo simulado:
 ```bash
 export UART_SIMULATED=true
 export MOCK_PAYMENT_SERVER=true
-export CAMERA_INDEX=0        # cámara USB local
+export CAMERA_INDEX=1        # cámara USB local (autodetectado si falla)
 export DB_PATH=/tmp/parking.db
 ```
 
@@ -220,6 +250,41 @@ Cargar datos de prueba en la base de datos:
 sqlite3 /tmp/parking.db < db/migrations/001_initial.sql
 sqlite3 /tmp/parking.db < db/seeds/simulation_data.sql
 ```
+
+---
+
+## Pipeline de visión (cómo se lee la placa)
+
+Al recibir `presence_detected`, el `vision-service` abre **una sesión de cámara a la
+vez** y la procesa con dos hilos:
+
+1. **Captura** — abre la cámara USB (con **autodetección de índice**: prueba
+   `CAMERA_INDEX` y, si falla, escanea `/dev/video0..N` y se queda con el que
+   entregue imagen), y reescribe `latest.jpg` a `LIVE_FPS` para la vista en vivo.
+2. **Detección + OCR** — corre **YOLO11m INT8 (TFLite, multi-hilo)** para ubicar la
+   placa; YOLO es caro (~5 s con 4 hilos), así que se reusa la caja y se **reintenta
+   el OCR sobre varios frames** (`REDETECT_S` controla cada cuánto re-detectar).
+3. **OCR (Tesseract)** — sobre el recorte **a color** (lee mejor que binarizado), sin
+   `tessedit_char_whitelist` (rompe el motor LSTM de Tesseract 5), filtrando a
+   `A-Z0-9` y prefiriendo el candidato con **formato de placa** (`AAA999`).
+4. **Validación** — `PlateValidator` normaliza (corrige confusiones O↔0, I↔1, B↔8…),
+   exige formato `^[A-Z]{3}[0-9]{3}$` **sin guion** (igual que la BD) y compara la
+   confianza contra el umbral. Si supera → `plate_read` → el orchestrator decide.
+
+**Variables de ajuste** (en `config/app.env`):
+
+| Variable             | Default                    | Para qué |
+|----------------------|----------------------------|----------|
+| `CAMERA_INDEX`       | 0                          | Índice de la cámara USB (la nuestra cae en 1) |
+| `OCR_CONFIDENCE_MIN` | 0.30                       | Umbral de confianza OCR. Placa en **pantalla** ~0.2–0.5; en **papel** ~0.7–0.9 |
+| `STREAM_MAX_SECONDS` | 20                         | Duración de la sesión de cámara |
+| `LIVE_FPS`           | 10                         | FPS de la vista en vivo (`latest.jpg`) |
+| `REDETECT_S`         | 8                          | Cada cuánto re-correr YOLO dentro de una sesión |
+| `TFLITE_THREADS`     | nº de núcleos              | Hilos del intérprete TFLite (4 en la BeaglePlay) |
+
+> **Consejo de demo:** mostrar la placa **impresa en papel mate** (no en pantalla)
+> sube mucho la confianza del OCR y la lectura es fiable. En pantalla hay brillo y
+> *moiré* que confunden dígitos (p.ej. `3`→`9`).
 
 ---
 
@@ -332,6 +397,15 @@ pytest services/ -v
 | A4  | GPIO sin mutex en watchdog — eliminado el fallback inseguro          |
 | A5  | `tmp_captures/` crecía sin límite — limpieza en `finally`            |
 | A6  | Confianza Tesseract en escala 0–100 vs 0.0–1.0 — normalizada         |
+| V1  | Evidencia de cámara en `/tmp` (aislado por `PrivateTmp`) — movida a `/var/lib/parking/evidence` |
+| V2  | Cámara no abría — autodetección de índice (`/dev/video1`) y grupo `video` |
+| V3  | Dashboard sin estilos — Flask sirve `style.css`/`script.js` por ruta directa |
+| V4  | Cajas YOLO `(0,0,0,0)` — escala de coords normalizadas mal aplicada  |
+| V5  | OCR devolvía vacío — `tessedit_char_whitelist` rompe el LSTM de Tesseract 5 |
+| V6  | OCR sobre binarizado fallaba — se usa el recorte a color (Leptonica) |
+| V7  | YOLO ~12–17 s/inferencia — TFLite a 1 hilo; ahora multi-hilo (~5 s)  |
+| V8  | 1 solo intento por sesión — 1 YOLO → varios OCR sobre frames frescos |
+| V9  | Validador exigía guion (`ABC-123`) ≠ BD (`ABC123`) — alineado sin guion |
 
 ---
 

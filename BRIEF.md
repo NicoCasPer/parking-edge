@@ -25,6 +25,12 @@
 - ✅ **Diagramas / slides**: diagrama de arquitectura del README, tabla de tópicos MQTT, tabla de bugs corregidos.
 - (Opcional) Modo simulado (`UART_SIMULATED=true`, `MOCK_PAYMENT_SERVER=true`) para una demo controlada sin depender del hardware en vivo.
 
+> **Para grabar la demo en vivo:**
+> - Arrancar todo con `bash scripts/run_demo.sh` (un solo terminal).
+> - Mostrar la placa **impresa en papel mate**, de frente y bien iluminada — sube la
+>   confianza del OCR y la lectura es fiable (en pantalla hay brillo/moiré que falla).
+> - Tener listas las placas de demo de la sección 9b (whitelist, pago y denegada).
+
 ## 4. Problema / motivación (gancho inicial)
 
 Control de acceso a un parqueadero **automatizado por reconocimiento de placas**, capaz de operar en el borde (*edge*), de forma **segura ante fallos** y **sin depender de la nube** para la decisión de acceso. Reemplaza tickets/tarjetas y operación manual de la barrera.
@@ -40,7 +46,8 @@ Una cámara lee la placa del vehículo; el sistema decide el acceso según white
 ## 7. Puntos técnicos fuertes a destacar
 
 1. **Arquitectura de microservicios desacoplados por MQTT** — cada servicio hace una cosa; el bus de eventos los integra.
-2. **Visión en el borde**: YOLO11m cuantizado **INT8 con TensorFlow Lite** + OCR Tesseract sobre cámara USB. Hablar de por qué INT8 (rendimiento en ARM sin GPU).
+2. **Visión en el borde**: YOLO11m cuantizado **INT8 con TensorFlow Lite** + OCR Tesseract sobre cámara USB. Hablar de por qué INT8 (rendimiento en ARM sin GPU) y de la optimización **multi-hilo de TFLite** (de ~12–17 s a ~5 s por inferencia usando los 4 núcleos A53).
+   - El pipeline real: sesión de cámara en vivo → 1 detección YOLO (caja) → **varios intentos de OCR** sobre frames frescos → validación de formato `AAA999` → decisión. Buen ejemplo de optimización en hardware limitado.
 3. **Separación tiempo real / lógica**: el ESP32 (FreeRTOS) garantiza la respuesta dura del sensor y la barrera; Linux hace la inteligencia. Comunicación por UART.
    - La barrera se **simula con un LED por PWM**: respiración ~5 s al abrir, encendido fijo mientras abre, respiración ~5 s al cerrar hasta apagarse. El auto-cierre tras 5 s sin vehículo vive en el ESP32 con su propio HC-SR04.
    - **Cámara en vivo**: al detectar un vehículo, el vision-service abre una sesión, transmite los frames al dashboard y, apenas YOLO+OCR leen una placa clara, dispara la decisión de acceso.
@@ -48,7 +55,7 @@ Una cámara lee la placa del vehículo; el sistema decide el acceso según white
 5. **Watchdog de hardware**: si Linux no responde en 5 s, el ESP32 cierra la barrera por su cuenta.
 6. **Resiliencia de pagos**: circuit breaker + store-and-forward (cola offline) cuando el proveedor de pagos falla.
 7. **Migración M4F → ESP32**: decisión de ingeniería real (simplicidad de cableado, depuración y flasheo). Bonus de honestidad técnica frente al jurado.
-8. **Calidad**: tabla de bugs corregidos (C1–A6) — integración, FAIL-CLOSED, mutex en GPIO, normalización de confianza OCR, etc.
+8. **Calidad / depuración real**: tabla de bugs corregidos (C1–A6 y V1–V9) — integración, FAIL-CLOSED, mutex en GPIO, escala de cajas YOLO, OCR (whitelist que rompía el LSTM, color vs binarizado), TFLite multi-hilo, validador alineado a la BD. Excelente material para mostrar **proceso de ingeniería y debugging sistemático**.
 
 ## 8. Propuesta de división entre los 2 integrantes
 
@@ -66,16 +73,26 @@ Una cámara lee la placa del vehículo; el sistema decide el acceso según white
 - Resiliencia de pagos (circuit breaker + cola offline).
 - Dashboard en vivo (eventos, override, whitelist) + cierre con calidad/bugs corregidos.
 
-## 9. Datos a completar por el equipo (rellenar antes de grabar)
+## 9. Datos / métricas (medidos en la BeaglePlay)
 
-> Estos números hacen el guion mucho más fuerte. Reemplazar los `???`.
+Valores reales obtenidos durante la integración (úsalos en el guion):
 
-- Precisión / tasa de acierto del OCR de placas: `???`
-- Tiempo desde detección hasta apertura de barrera: `??? s`
-- Tiempo de inferencia del modelo en el BeaglePlay: `??? ms`
-- Tamaño del modelo TFLite INT8: `??? MB`
-- Nº de placas en whitelist / volumen de prueba: `???`
+- **Inferencia YOLO11m INT8 (TFLite):** ~12–17 s con 1 hilo → **~5 s con 4 hilos** (multi-hilo).
+- **OCR (Tesseract):** ~2–3 s por intento; **varios intentos por sesión**.
+- **Confianza OCR:** placa en **pantalla** ~0.2–0.5; en **papel mate** ~0.7–0.9.
+- **Modelo:** `best_plate_yolo11m_int8.tflite`, ~20 MB (INT8).
+- **Cámara USB:** UVC, cae en `/dev/video1` (autodetectado).
+- **Hardware tiempo real:** ESP32 (HC-SR04, debounce 3 lecturas <50 cm) por UART a 115200.
+
+Pendiente de completar por el equipo:
+- Precisión / tasa de acierto del OCR sobre vuestro set de placas: `???`
 - Nombres de los integrantes y de la materia: `???`
+
+> **Lección clave para el guion (muy buena ante un jurado técnico):** el cuello de
+> botella no era el modelo sino la **configuración** — TFLite a 1 hilo, el
+> `tessedit_char_whitelist` que rompe el LSTM de Tesseract 5, y binarizar a mano
+> cuando Leptonica lo hace mejor. Mostrar este *debugging* da más puntos que el
+> "happy path".
 
 ## 9b. Placas de demo (verificadas contra el seed)
 
