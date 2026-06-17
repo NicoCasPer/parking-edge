@@ -300,6 +300,7 @@ def _run_camera_session(
 
         best_conf, best_text, best_frame = -1.0, "", None
         published = False
+        yolo_runs = detections = ocr_attempts = 0   # contadores de diagnóstico
 
         while _running and time.monotonic() < deadline:
             frame = shared["frame"]
@@ -308,18 +309,28 @@ def _run_camera_session(
                 continue
 
             img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            t_det = time.monotonic()
             boxes = model.detect(img_rgb)
+            yolo_runs += 1
+            if yolo_runs == 1:
+                logger.info("YOLO 1ª inferencia: %.2fs | cajas=%d",
+                            time.monotonic() - t_det, len(boxes))
             if len(boxes) == 0:
                 time.sleep(0.02)
                 continue
 
+            detections += 1
             x1, y1, x2, y2 = map(int, boxes[0])
             h, w = img_rgb.shape[:2]
             roi = img_rgb[max(0, y1):min(h, y2), max(0, x1):min(w, x2)]
+            logger.info("YOLO detectó %d caja(s) | box=(%d,%d,%d,%d) roi=%dx%d",
+                        len(boxes), x1, y1, x2, y2, roi.shape[1], roi.shape[0])
             if roi.size == 0:
                 continue
 
+            ocr_attempts += 1
             raw_text, confidence = _run_tesseract(roi)
+            logger.info("OCR | raw='%s' conf=%.2f", raw_text, confidence)
             if confidence > best_conf:
                 best_conf, best_text, best_frame = confidence, raw_text, frame
 
@@ -332,6 +343,11 @@ def _run_camera_session(
                                  lane_id=lane_id, trace_id=trace_id)
                 published = True
                 break
+
+        logger.info(
+            "Fin sesión | yolo_runs=%d detecciones=%d ocr=%d mejor_text='%s' conf=%.2f publicada=%s",
+            yolo_runs, detections, ocr_attempts, best_text, max(best_conf, 0.0), published,
+        )
 
         # Ventana terminada sin placa clara: dejar traza del mejor intento.
         if not published:
