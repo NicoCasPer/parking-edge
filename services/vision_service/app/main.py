@@ -80,9 +80,14 @@ class YOLO11TFLiteDetector:
     def __init__(self, model_path: str):
         # AÑADIDO: Cerrojo para evitar cruce de hilos en TFLite
         self.lock = threading.Lock()
-        
-        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+
+        # Usar varios hilos del CPU (la BeaglePlay tiene 4 núcleos A53). Por
+        # defecto TFLite usa 1 → inferencia ~12-17s; con 4 baja bastante.
+        n_threads = int(os.getenv("TFLITE_THREADS", str(os.cpu_count() or 4)))
+        self.interpreter = tf.lite.Interpreter(model_path=model_path,
+                                               num_threads=n_threads)
         self.interpreter.allocate_tensors()
+        logger.info("TFLite Interpreter con num_threads=%d", n_threads)
         
         self.input_details = self.interpreter.get_input_details()
         self.output_details = self.interpreter.get_output_details()
