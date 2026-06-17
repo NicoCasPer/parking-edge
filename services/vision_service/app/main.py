@@ -50,6 +50,9 @@ _LANE_ID = os.getenv("LANE_ID", "ENTRADA-1")
 # Duración máxima de una sesión de cámara en vivo (s) tras detectarse un vehículo.
 _STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "8"))
 
+# Frames por segundo de la vista en vivo (latest.jpg). Independiente de YOLO.
+_LIVE_FPS = float(os.getenv("LIVE_FPS", "10"))
+
 # Solo una sesión de cámara a la vez: la USB tiene un único dueño.
 _session_lock = threading.Lock()
 
@@ -232,6 +235,28 @@ def _frame_quality(frame: np.ndarray) -> float:
 # Sesión de cámara en vivo por evento de presencia
 # ---------------------------------------------------------------------------
 
+def _capture_loop(cap, shared: Dict[str, Any], stop: threading.Event) -> None:
+    """
+    Hilo de captura: lee frames lo más rápido posible para la vista EN VIVO.
+
+    Reescribe latest.jpg a ~_LIVE_FPS (independiente de lo lento que sea YOLO) y
+    deja el último frame en `shared["frame"]` para que el hilo de detección lo
+    consuma. Único dueño de la cámara → no hay aperturas concurrentes de /dev/video0.
+    """
+    min_interval = 1.0 / _LIVE_FPS
+    last_write   = 0.0
+    while not stop.is_set():
+        ok, frame = cap.read()
+        if not ok or frame is None or frame.size == 0:
+            time.sleep(0.02)
+            continue
+        shared["frame"] = frame
+        now = time.monotonic()
+        if now - last_write >= min_interval:
+            write_latest_frame(frame)   # vista en vivo del dashboard
+            last_write = now
+
+
 def _run_camera_session(
     pipeline:  OCRPipeline,
     trace_id:  Optional[str],
@@ -240,49 +265,52 @@ def _run_camera_session(
     """
     Sesión de cámara en vivo disparada por presence_detected.
 
-    Abre la cámara una sola vez y, durante _STREAM_MAX_SECONDS:
-      - reescribe latest.jpg en cada frame (vista en vivo del dashboard),
-      - corre YOLO y, en cuanto detecta una placa CLARA (formato válido y
-        confianza sobre el umbral), publica plate_read y termina → el
-        access-orchestrator decide whitelist/pago y abre la barrera.
-    Si la ventana expira sin placa clara, publica el mejor intento (o
-    plate_unreadable) para dejar traza del evento.
+    Abre la cámara una sola vez (una sesión a la vez) y arranca dos tareas:
+      - captura: transmite la vista en vivo (latest.jpg) a ~_LIVE_FPS,
+      - detección: corre YOLO sobre el frame más reciente y, en cuanto lee una
+        placa CLARA (formato válido + confianza sobre el umbral), publica
+        plate_read y termina → el orchestrator decide whitelist/pago y abre.
+    Si la ventana (_STREAM_MAX_SECONDS) expira sin placa clara, publica el mejor
+    intento (o plate_unreadable) para dejar traza.
+
+    Desacoplar captura de detección mantiene la vista en vivo fluida aunque la
+    inferencia YOLO sea lenta en el BeaglePlay.
     """
     if not _session_lock.acquire(blocking=False):
         logger.info("Sesión de cámara ya activa; se ignora presence_detected | trace_id=%s",
                     trace_id)
         return
 
-    cap = None
-    try:
-        cap = open_camera()
-        if cap is None:
-            logger.warning("Cámara no disponible. plate_unreadable.")
-            pipeline.process("", 0.0, "", 0.0, lane_id=lane_id, trace_id=trace_id)
-            return
+    cap = open_camera()
+    if cap is None:
+        logger.warning("Cámara no disponible. plate_unreadable.")
+        pipeline.process("", 0.0, "", 0.0, lane_id=lane_id, trace_id=trace_id)
+        _session_lock.release()
+        return
 
+    stop      = threading.Event()
+    shared: Dict[str, Any] = {"frame": None}
+    capturer  = threading.Thread(target=_capture_loop, args=(cap, shared, stop),
+                                 daemon=True, name=f"vision-capture-{trace_id}")
+    capturer.start()
+
+    try:
         model = _get_yolo_model()
         deadline = time.monotonic() + _STREAM_MAX_SECONDS
 
         best_conf, best_text, best_frame = -1.0, "", None
-        last_frame = None
-        published  = False
+        published = False
 
         while _running and time.monotonic() < deadline:
-            ok, frame = cap.read()
-            if not ok or frame is None or frame.size == 0:
-                time.sleep(0.02)
-                continue
-
-            last_frame = frame
-            write_latest_frame(frame)   # vista en vivo del dashboard
-
-            if model is None:
+            frame = shared["frame"]
+            if frame is None or model is None:
+                time.sleep(0.05)
                 continue
 
             img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             boxes = model.detect(img_rgb)
             if len(boxes) == 0:
+                time.sleep(0.02)
                 continue
 
             x1, y1, x2, y2 = map(int, boxes[0])
@@ -307,21 +335,20 @@ def _run_camera_session(
 
         # Ventana terminada sin placa clara: dejar traza del mejor intento.
         if not published:
-            if best_frame is not None:
-                evidence = persist_evidence_frame(best_frame, trace_id) or ""
+            fallback = best_frame if best_frame is not None else shared["frame"]
+            if fallback is not None:
+                evidence = persist_evidence_frame(fallback, trace_id) or ""
                 pipeline.process(best_text, max(best_conf, 0.0), evidence,
-                                 _frame_quality(best_frame),
+                                 _frame_quality(fallback),
                                  lane_id=lane_id, trace_id=trace_id)
-            elif last_frame is not None:
-                evidence = persist_evidence_frame(last_frame, trace_id) or ""
-                pipeline.process("", 0.0, evidence, 0.0, lane_id=lane_id, trace_id=trace_id)
             else:
                 logger.warning("No se capturó ningún frame en la sesión. plate_unreadable.")
                 pipeline.process("", 0.0, "", 0.0, lane_id=lane_id, trace_id=trace_id)
 
     finally:
-        if cap is not None:
-            cap.release()
+        stop.set()
+        capturer.join(timeout=1.0)
+        cap.release()
         _session_lock.release()
 
 
