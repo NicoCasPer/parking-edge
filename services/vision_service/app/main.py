@@ -221,14 +221,15 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
         binarized = cv2.threshold(gray, 0, 255,
                                   cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
-        # Guardar lo que ve Tesseract para depurar (OCR_DEBUG=1).
-        if os.getenv("OCR_DEBUG", "0") == "1":
-            try:
-                dbg = os.path.join(os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence"),
-                                   "ocr_debug.jpg")
-                cv2.imwrite(dbg, binarized)
-            except Exception:
-                pass
+        # Guardar SIEMPRE lo que ve el OCR para depurar: el recorte a color y la
+        # imagen binarizada que entra a Tesseract.
+        try:
+            edir = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
+            cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"),
+                        cv2.cvtColor(roi_image, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), binarized)
+        except Exception:
+            pass
 
         whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         # psm 7 = una línea de texto (placa completa); 6 = bloque; 8 = palabra.
@@ -236,7 +237,7 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
         for psm in (7, 6, 8):
             data = pytesseract.image_to_data(
                 binarized,
-                config=f"--oem 1 --psm {psm} -c tessedit_char_whitelist={whitelist}",
+                config=f"--psm {psm} -c tessedit_char_whitelist={whitelist}",
                 output_type=pytesseract.Output.DICT,
             )
             texts, confs = [], []
