@@ -246,9 +246,11 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
         # psm 7 = una línea (placa completa); 6 = bloque.
         for _name, img in variants:
             for psm in (7, 6):
+                # SIN tessedit_char_whitelist: en Tesseract 5 (LSTM) ese parámetro
+                # rompe el decoder y devuelve vacío. Filtramos a A-Z0-9 después.
                 data = pytesseract.image_to_data(
                     img,
-                    config=f"--psm {psm} -c tessedit_char_whitelist={whitelist}",
+                    config=f"--psm {psm}",
                     output_type=pytesseract.Output.DICT,
                 )
                 texts, confs = [], []
@@ -258,7 +260,8 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
                     if c > 0 and t:
                         texts.append(t)
                         confs.append(c)
-                text = "".join(texts).upper().replace(" ", "")
+                raw = "".join(texts).upper().replace(" ", "")
+                text = "".join(ch for ch in raw if ch in whitelist)  # filtro A-Z0-9
                 conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
                 # Preferir lecturas más completas (placa colombiana = 6 chars).
                 if text and (len(text) > len(best_text) or
