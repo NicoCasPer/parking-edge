@@ -61,12 +61,29 @@ if ! pgrep -x mosquitto >/dev/null 2>&1; then
 fi
 
 # ── 2. Base de datos (crear + migrar + seed solo si no existe) ────────────────
+DB_DIR="$(dirname "$DB_PATH")"
+# El directorio debe existir y ser ESCRIBIBLE por el usuario actual. Si lo creó
+# systemd como usuario 'parking' (modo 0750), 'debian' no puede escribir: tomamos
+# propiedad. mkdir -p sobre un dir existente "tiene éxito" y no arregla permisos,
+# por eso comprobamos -w explícitamente.
+if [[ ! -d "$DB_DIR" || ! -w "$DB_DIR" ]]; then
+  echo "[run_demo] Preparando $DB_DIR con permisos para $(id -un) (puede pedir sudo)..."
+  sudo install -d -m0775 -o "$(id -un)" -g "$(id -gn)" "$DB_DIR" \
+    && sudo chown -R "$(id -un)":"$(id -gn)" "$DB_DIR" \
+    || mkdir -p "$DB_DIR"
+fi
+# BD existente pero sin permiso de escritura (creada por otro usuario) → tomar propiedad.
+if [[ -e "$DB_PATH" && ! -w "$DB_PATH" ]]; then
+  sudo chown -R "$(id -un)":"$(id -gn)" "$DB_DIR" 2>/dev/null || true
+fi
 if [[ ! -f "$DB_PATH" ]]; then
   echo "[run_demo] Inicializando base de datos en $DB_PATH..."
-  mkdir -p "$(dirname "$DB_PATH")" 2>/dev/null \
-    || sudo install -d -m0750 -o "$(id -un)" -g "$(id -gn)" "$(dirname "$DB_PATH")"
-  sqlite3 "$DB_PATH" < db/migrations/001_initial.sql
-  sqlite3 "$DB_PATH" < db/seeds/simulation_data.sql
+  if sqlite3 "$DB_PATH" < db/migrations/001_initial.sql \
+     && sqlite3 "$DB_PATH" < db/seeds/simulation_data.sql; then
+    echo "[run_demo] Base de datos lista."
+  else
+    echo "[run_demo] ERROR inicializando la BD en $DB_PATH (revisa permisos)." >&2
+  fi
 fi
 
 # ── 3. Servicios (en orden de dependencia) ───────────────────────────────────
