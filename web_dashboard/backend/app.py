@@ -91,6 +91,20 @@ def index():
     return send_from_directory(_FRONTEND_DIR, "index.html")
 
 
+# Servir los assets del frontend por su nombre directo. index.html los pide como
+# rutas relativas (style.css / script.js), y vía nginx un GET /style.css cae en
+# este proxy hacia Flask; sin estas rutas devolvería 404 y el dashboard saldría
+# sin estilos ni JavaScript.
+@app.route("/style.css")
+def style_css():
+    return send_from_directory(_FRONTEND_DIR, "style.css", mimetype="text/css")
+
+
+@app.route("/script.js")
+def script_js():
+    return send_from_directory(_FRONTEND_DIR, "script.js", mimetype="application/javascript")
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
