@@ -48,7 +48,7 @@ _MODEL_PATH = os.getenv(
 _LANE_ID = os.getenv("LANE_ID", "ENTRADA-1")
 
 # Duración máxima de una sesión de cámara en vivo (s) tras detectarse un vehículo.
-_STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "8"))
+_STREAM_MAX_SECONDS = float(os.getenv("STREAM_MAX_SECONDS", "12"))
 
 # Frames por segundo de la vista en vivo (latest.jpg). Independiente de YOLO.
 _LIVE_FPS = float(os.getenv("LIVE_FPS", "10"))
@@ -126,11 +126,19 @@ class YOLO11TFLiteDetector:
             confidence = float(np.max(scores))
             if confidence > conf_threshold:
                 cx, cy, w, h = pred[:4]
+                # El export TFLite puede dar coords NORMALIZADAS [0,1] o en píxeles
+                # del modelo [0, model_width]. Se detecta por magnitud para ser
+                # robustos a ambos: si están en [0,1], escalar directo al tamaño de
+                # la cámara; si están en píxeles del modelo, escalar por la razón.
+                if max(cx, cy, w, h) <= 1.5:
+                    sx, sy = w_orig, h_orig
+                else:
+                    sx, sy = w_orig / self.model_width, h_orig / self.model_height
                 # Re-escalar coordenadas de formato centro a tamaño original de la cámara
-                x = int((cx - w / 2) * (w_orig / self.model_width))
-                y = int((cy - h / 2) * (h_orig / self.model_height))
-                w_box = int(w * (w_orig / self.model_width))
-                h_box = int(h * (h_orig / self.model_height))
+                x = int((cx - w / 2) * sx)
+                y = int((cy - h / 2) * sy)
+                w_box = int(w * sx)
+                h_box = int(h * sy)
                 
                 boxes.append([x, y, w_box, h_box])
                 confidences.append(confidence)
@@ -171,6 +179,20 @@ def _get_yolo_model():
         except Exception as exc:
             logger.error("Error cargando modelo YOLO TFLite: %s", exc)
         return _yolo_model
+
+
+def _warmup_model() -> None:
+    """Ejecuta una inferencia en blanco para pagar el warmup de XNNPACK al arrancar."""
+    model = _get_yolo_model()
+    if model is None:
+        return
+    try:
+        dummy = np.zeros((model.model_height, model.model_width, 3), dtype=np.uint8)
+        t = time.monotonic()
+        model.detect(dummy)
+        logger.info("YOLO warmup completado en %.2fs", time.monotonic() - t)
+    except Exception as exc:
+        logger.warning("Warmup YOLO falló: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +436,10 @@ def main() -> None:
     pipeline = OCRPipeline(event_bus=bus, policies_path=policies_path, lane_id=lane_id)
 
     bus.subscribe(Topics.PRESENCE_DETECTED, _make_presence_handler(pipeline, lane_id))
+
+    # Calentar el modelo ahora (la 1ª inferencia incluye el warmup de XNNPACK y
+    # tarda ~10 s) para que la primera sesión de cámara no se lo coma.
+    _warmup_model()
 
     logger.info("vision-service listo | lane=%s model=%s", lane_id, _MODEL_PATH)
 
