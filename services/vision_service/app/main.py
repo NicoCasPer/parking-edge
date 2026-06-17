@@ -14,6 +14,7 @@ Integra la captura de cámara (Juanito_part) con el bus MQTT (integrante_B):
 
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -209,65 +210,65 @@ def _run_tesseract(roi_image: np.ndarray) -> tuple[str, float]:
     try:
         import pytesseract
 
-        gray = cv2.cvtColor(roi_image, cv2.COLOR_RGB2GRAY)
+        # La prueba directa mostró que el COLOR lee mejor que el gris (Leptonica
+        # binariza el color mejor para esta placa amarilla). Partimos del color.
+        roi_bgr = cv2.cvtColor(roi_image, cv2.COLOR_RGB2BGR)
 
-        # Tesseract rinde mucho mejor con caracteres altos: escalar el ROI hasta
-        # ~200 px de alto si viene pequeño.
-        h, w = gray.shape[:2]
-        if 0 < h < 200:
-            f = 200.0 / h
-            gray = cv2.resize(gray, (int(w * f), 200), interpolation=cv2.INTER_CUBIC)
+        # Upscaling: caracteres grandes ⇒ mejor OCR. Apuntamos a ~320 px de alto.
+        h, w = roi_bgr.shape[:2]
+        scale = max(1.0, 320.0 / max(h, 1))
+        if scale > 1.0:
+            roi_bgr = cv2.resize(roi_bgr, (int(w * scale), int(h * scale)),
+                                 interpolation=cv2.INTER_CUBIC)
 
-        # CLAVE: Tesseract binariza internamente (Leptonica) mucho mejor que un
-        # OTSU/adaptativo manual para esta placa amarilla con luz despareja, así que
-        # la imagen en GRIS es la entrada principal. Se dejan OTSU/adaptativa solo
-        # como respaldo.
+        gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-        adaptive = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, 11)
         variants = [
-            ("gray",     gray),      # ← la que SÍ funciona (binariza Tesseract)
-            ("otsu",     otsu),
-            ("adaptive", adaptive),
+            ("color", roi_bgr),   # ← la que mejor lee
+            ("gray",  gray),
+            ("otsu",  otsu),
         ]
 
         # Guardar SIEMPRE lo que ve el OCR para depurar.
         try:
             edir = os.getenv("EVIDENCE_PATH", "/tmp/parking_evidence")
-            cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"),
-                        cv2.cvtColor(roi_image, cv2.COLOR_RGB2BGR))
-            cv2.imwrite(os.path.join(edir, "ocr_gray.jpg"), gray)
+            cv2.imwrite(os.path.join(edir, "ocr_roi.jpg"), roi_bgr)
             cv2.imwrite(os.path.join(edir, "ocr_bin.jpg"), otsu)
         except Exception:
             pass
 
         whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        best_text, best_conf = "", 0.0
-        # psm 7 = una línea (placa completa); 6 = bloque.
+        plate_re  = re.compile(r"^[A-Z]{3}[0-9]{3}$")  # formato placa CO
+
+        best_text, best_conf, best_score = "", 0.0, -1.0
         for _name, img in variants:
-            for psm in (7, 6):
-                # SIN tessedit_char_whitelist: en Tesseract 5 (LSTM) ese parámetro
-                # rompe el decoder y devuelve vacío. Filtramos a A-Z0-9 después.
+            for psm in (7, 6, 11):  # 7=línea, 6=bloque, 11=texto disperso
                 data = pytesseract.image_to_data(
-                    img,
-                    config=f"--psm {psm}",
+                    img, config=f"--psm {psm}",
                     output_type=pytesseract.Output.DICT,
                 )
                 texts, confs = [], []
                 for i in range(len(data["text"])):
                     t = data["text"][i].strip()
-                    c = int(data["conf"][i])
+                    try:
+                        c = int(float(data["conf"][i]))
+                    except (ValueError, TypeError):
+                        c = -1
                     if c > 0 and t:
                         texts.append(t)
                         confs.append(c)
-                raw = "".join(texts).upper().replace(" ", "")
+                raw  = "".join(texts).upper().replace(" ", "")
                 text = "".join(ch for ch in raw if ch in whitelist)  # filtro A-Z0-9
                 conf = (sum(confs) / len(confs) / 100.0) if confs else 0.0
-                # Preferir lecturas más completas (placa colombiana = 6 chars).
-                if text and (len(text) > len(best_text) or
-                             (len(text) == len(best_text) and conf > best_conf)):
-                    best_text, best_conf = text, conf
+                if not text:
+                    continue
+                # Puntaje: prioriza formato de placa válido, luego longitud, luego conf.
+                score = conf + (10.0 if plate_re.match(text) else 0.0) + 0.1 * len(text)
+                if score > best_score:
+                    best_text, best_conf, best_score = text, conf, score
 
+        if best_text:
+            logger.debug("OCR mejor candidato='%s' conf=%.2f", best_text, best_conf)
         return best_text, best_conf
 
     except Exception as exc:
